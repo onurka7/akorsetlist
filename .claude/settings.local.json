@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(plutil -p /tmp/akor_setlist_extracted/Payload/Runner.app/Info.plist)",
+      "Bash(flutter analyze:*)",
+      "Bash(grep -v \"^$\")"
+    ]
+  }
+}
