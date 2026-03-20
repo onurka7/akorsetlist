@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../models/song.dart';
 import '../repositories/setlist_repo.dart';
 import '../repositories/song_repo.dart';
+import '../state/ui_prefs.dart';
 
 class PlayScreen extends StatefulWidget {
   final int setlistId;
@@ -45,6 +46,10 @@ class _PlayScreenState extends State<PlayScreen> {
   bool _pageReady = false;
   bool _pendingStageStart = false;
 
+  void _handleChordColorChanged() {
+    _applyReaderPrefs();
+  }
+
   void _goHome() {
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
@@ -53,6 +58,7 @@ class _PlayScreenState extends State<PlayScreen> {
   void initState() {
     super.initState();
     idx = widget.initialIndex;
+    UiPrefs.chordColor.addListener(_handleChordColorChanged);
 
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -95,6 +101,7 @@ class _PlayScreenState extends State<PlayScreen> {
 
   @override
   void dispose() {
+    UiPrefs.chordColor.removeListener(_handleChordColorChanged);
     // dispose içinde await kullanmayalım
     _stageStopScroll();
     _exitStageUIMode();
@@ -526,7 +533,9 @@ class _PlayScreenState extends State<PlayScreen> {
     final linePx = (26 * fontScale).clamp(20, 44).toStringAsFixed(1);
 
     // 🎸 chord rengi
-    final chordColor = darkMode ? "#ff6b6b" : "#b00020";
+    final selectedChordColor = UiPrefs.chordColor.value;
+    final chordColor =
+        '#${selectedChordColor.toARGB32().toRadixString(16).substring(2)}';
 
     final stageExtra = stageMode
         ? """

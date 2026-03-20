@@ -1,21 +1,16 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
-import 'package:share_plus/share_plus.dart';
 
 import '../models/setlist.dart';
 import '../models/song.dart';
 import '../repositories/setlist_repo.dart';
 import '../repositories/song_repo.dart';
-import '../services/backup_service.dart';
 import '../services/membership_access_service.dart';
-import '../services/setlist_import_service.dart';
 import '../services/user_storage_service.dart';
-import '../state/ui_prefs.dart';
 import '../widgets/google_auth_widget.dart';
 import 'play_screen.dart';
 import 'setlist_detail_screen.dart';
@@ -45,9 +40,6 @@ class SetlistsScreen extends StatefulWidget {
 class SetlistsScreenState extends State<SetlistsScreen> {
   final repo = SetlistRepo();
   final songRepo = SongRepo();
-  final backupService = BackupService();
-  final setlistImportService = SetlistImportService();
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   List<Setlist> setlists = [];
   List<Song> allSongs = [];
@@ -58,9 +50,16 @@ class SetlistsScreenState extends State<SetlistsScreen> {
   int? _lastEmittedSetlistId;
   int _topTab = -1; // -1: home, 0: songs, 1: setlists, 2: favorites
 
+  int get currentTopTab => _topTab;
+
   void showDashboardHome() {
     if (!mounted) return;
     setState(() => _topTab = -1);
+  }
+
+  void showAllSongs() {
+    if (!mounted) return;
+    setState(() => _topTab = 0);
   }
 
   @override
@@ -531,192 +530,9 @@ class SetlistsScreenState extends State<SetlistsScreen> {
     );
   }
 
-  Future<void> _pickChordColor() async {
-    final colors = <Color>[
-      const Color(0xFFB00020),
-      const Color(0xFFEF5350),
-      const Color(0xFF42A5F5),
-      const Color(0xFF66BB6A),
-      const Color(0xFFFFC83D),
-    ];
-
-    final selected = await showModalBottomSheet<Color>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-        child: Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: colors
-              .map(
-                (c) => GestureDetector(
-                  onTap: () => Navigator.pop(ctx, c),
-                  child: CircleAvatar(
-                    radius: 18,
-                    backgroundColor: c,
-                    child: UiPrefs.chordColor.value == c
-                        ? const Icon(Icons.check, color: Colors.white, size: 18)
-                        : null,
-                  ),
-                ),
-              )
-              .toList(),
-        ),
-      ),
-    );
-
-    if (selected == null) return;
-    UiPrefs.chordColor.value = selected;
-    if (mounted) setState(() {});
-    _showMessage('Akor rengi güncellendi.');
-  }
-
-  Future<void> _exportBackup() async {
-    try {
-      final file = await backupService.exportToJsonFile();
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        subject: 'Akor Setlist Yedeği',
-        text: 'Yedek dosyası',
-      );
-    } catch (e) {
-      if (!mounted) return;
-      _showMessage('Yedek dışa aktarılamadı: $e');
-    }
-  }
-
-  Future<void> _importBackup() async {
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
-      withData: false,
-    );
-    final path = (picked == null || picked.files.isEmpty)
-        ? null
-        : picked.files.first.path;
-    if (path == null || path.isEmpty || !mounted) return;
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Yedek geri yüklensin mi?'),
-        content: const Text(
-          'Mevcut setlist ve şarkılar yedek içeriği ile değiştirilecek.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Vazgeç'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Geri Yükle'),
-          ),
-        ],
-      ),
-    );
-
-    if (ok != true) return;
-
-    try {
-      await backupService.restoreFromJsonFile(path);
-      await _load();
-      if (!mounted) return;
-      _showMessage('Yedek başarıyla geri yüklendi.');
-    } catch (e) {
-      if (!mounted) return;
-      _showMessage('Yedek geri yüklenemedi: $e');
-    }
-  }
-
-  Future<void> _importSharedSetlist() async {
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['akorsetlist', 'json'],
-      withData: false,
-    );
-    final path = (picked == null || picked.files.isEmpty)
-        ? null
-        : picked.files.first.path;
-    if (path == null || path.isEmpty || !mounted) return;
-
-    try {
-      final importedName = await setlistImportService.importSharedSetlist(path);
-      await _load();
-      if (!mounted) return;
-      _showMessage('$importedName repertuarı içe aktarıldı.');
-    } catch (e) {
-      if (!mounted) return;
-      _showMessage('Repertuar içe aktarılamadı: $e');
-    }
-  }
-
   void _showMessage(String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Widget _buildSettingsDrawer() {
-    final isDark = widget.isDarkMode;
-    return Drawer(
-      child: SafeArea(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            const DrawerHeader(
-              decoration: BoxDecoration(color: Color(0xFFFFC83D)),
-              child: Align(
-                alignment: Alignment.bottomLeft,
-                child: Text(
-                  'Ayarlar',
-                  style: TextStyle(
-                    color: Colors.black,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ),
-            GoogleAuthWidget(
-              mode: GoogleAuthMode.listTile,
-              isDark: isDark,
-              onMessage: _showMessage,
-            ),
-            SwitchListTile(
-              value: isDark,
-              title: Text(isDark ? 'Koyu Tema' : 'Açık Tema'),
-              secondary: Icon(
-                isDark ? Icons.dark_mode : Icons.light_mode,
-                color: const Color(0xFFFFC83D),
-              ),
-              onChanged: (v) => widget.onThemeChanged?.call(v),
-            ),
-            ListTile(
-              leading: Icon(Icons.color_lens, color: UiPrefs.chordColor.value),
-              title: const Text('Akor renklerini değiştir'),
-              onTap: _pickChordColor,
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.picture_as_pdf_outlined),
-              title: const Text('Yedeği dışa aktar'),
-              onTap: _exportBackup,
-            ),
-            ListTile(
-              leading: const Icon(Icons.share_outlined),
-              title: const Text('Yedeği geri yükle'),
-              onTap: _importBackup,
-            ),
-            ListTile(
-              leading: const Icon(Icons.playlist_add_rounded),
-              title: const Text('Paylaşılan repertuarı içe aktar'),
-              onTap: _importSharedSetlist,
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildQuickCards(bool isDark) {
@@ -865,9 +681,7 @@ class SetlistsScreenState extends State<SetlistsScreen> {
                 : 'Repertuarım';
 
     return Scaffold(
-      key: _scaffoldKey,
       backgroundColor: Colors.transparent,
-      drawer: _buildSettingsDrawer(),
       body: DecoratedBox(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -885,15 +699,6 @@ class SetlistsScreenState extends State<SetlistsScreen> {
                       padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
                       child: Row(
                         children: [
-                          IconButton(
-                            onPressed: () =>
-                                _scaffoldKey.currentState?.openDrawer(),
-                            icon: Icon(
-                              Icons.menu,
-                              color: const Color(0xFFFFC83D),
-                            ),
-                          ),
-                          const SizedBox(width: 2),
                           Expanded(
                             child: Text(
                               sectionTitle,

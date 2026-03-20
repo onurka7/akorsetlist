@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../db/app_db.dart';
+import '../services/backup_service.dart';
+import '../services/setlist_import_service.dart';
 import '../state/auth_state.dart';
 import '../state/membership_state.dart';
 import '../state/ui_prefs.dart';
@@ -23,6 +27,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _deleteBusy = false;
+  final backupService = BackupService();
+  final setlistImportService = SetlistImportService();
 
   Future<void> _pickChordColor(BuildContext context) async {
     final colors = <Color>[
@@ -66,7 +72,99 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (selected != null) {
-      UiPrefs.chordColor.value = selected;
+      await UiPrefs.setChordColor(selected);
+      if (!mounted) return;
+      ScaffoldMessenger.of(this.context).showSnackBar(
+        const SnackBar(content: Text('Akor rengi güncellendi.')),
+      );
+    }
+  }
+
+  Future<void> _exportBackup() async {
+    try {
+      final file = await backupService.exportToJsonFile();
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        subject: 'Akor Setlist Yedeği',
+        text: 'Yedek dosyası',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Yedek dışa aktarılamadı: $e')),
+      );
+    }
+  }
+
+  Future<void> _importBackup() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: false,
+    );
+    final path = (picked == null || picked.files.isEmpty)
+        ? null
+        : picked.files.first.path;
+    if (path == null || path.isEmpty || !mounted) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Yedek geri yüklensin mi?'),
+        content: const Text(
+          'Mevcut setlist ve şarkılar yedek içeriği ile değiştirilecek.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Geri Yükle'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    try {
+      await backupService.restoreFromJsonFile(path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Yedek başarıyla geri yüklendi.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Yedek geri yüklenemedi: $e')),
+      );
+    }
+  }
+
+  Future<void> _importSharedSetlist() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['akorsetlist', 'json'],
+      withData: false,
+    );
+    final path = (picked == null || picked.files.isEmpty)
+        ? null
+        : picked.files.first.path;
+    if (path == null || path.isEmpty || !mounted) return;
+
+    try {
+      final importedName = await setlistImportService.importSharedSetlist(path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$importedName repertuarı içe aktarıldı.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Repertuar içe aktarılamadı: $e')),
+      );
     }
   }
 
@@ -202,6 +300,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
               ),
               const SizedBox(height: 12),
+              Container(
+                decoration: BoxDecoration(
+                  color: cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.ios_share_outlined),
+                      title: Text(
+                        'Yedeği dışa aktar',
+                        style: TextStyle(color: titleColor),
+                      ),
+                      subtitle: Text(
+                        'Setlist ve şarkıları JSON olarak paylaş',
+                        style: TextStyle(color: subtitleColor),
+                      ),
+                      trailing: const Icon(
+                        Icons.chevron_right,
+                        color: Color(0xFFFFC83D),
+                      ),
+                      onTap: _exportBackup,
+                    ),
+                    Divider(height: 1, color: borderColor),
+                    ListTile(
+                      leading: const Icon(Icons.restore_page_outlined),
+                      title: Text(
+                        'Yedeği geri yükle',
+                        style: TextStyle(color: titleColor),
+                      ),
+                      subtitle: Text(
+                        'Seçilen JSON yedeğini cihaza geri al',
+                        style: TextStyle(color: subtitleColor),
+                      ),
+                      trailing: const Icon(
+                        Icons.chevron_right,
+                        color: Color(0xFFFFC83D),
+                      ),
+                      onTap: _importBackup,
+                    ),
+                    Divider(height: 1, color: borderColor),
+                    ListTile(
+                      leading: const Icon(Icons.playlist_add_rounded),
+                      title: Text(
+                        'Paylaşılan repertuarı içe aktar',
+                        style: TextStyle(color: titleColor),
+                      ),
+                      subtitle: Text(
+                        '`.akorsetlist` veya JSON dosyası seç',
+                        style: TextStyle(color: subtitleColor),
+                      ),
+                      trailing: const Icon(
+                        Icons.chevron_right,
+                        color: Color(0xFFFFC83D),
+                      ),
+                      onTap: _importSharedSetlist,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
               GoogleAuthWidget(
                 mode: GoogleAuthMode.card,
                 isDark: isDark,
@@ -251,33 +411,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               : 'Hesap ve Verileri Sil',
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: cardBg,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: borderColor),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Yakında Eklenecekler',
-                      style: TextStyle(
-                        color: Color(0xFFFFC83D),
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'Buraya yeni ayarları birlikte ekleyebiliriz.',
-                      style: TextStyle(color: subtitleColor),
                     ),
                   ],
                 ),

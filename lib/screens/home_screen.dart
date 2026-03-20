@@ -48,6 +48,15 @@ class HomeScreenState extends State<HomeScreen> {
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
+  void _openAllSongs() {
+    if (idx == 1) {
+      webSearchKey.currentState?.dismissKeyboard();
+    }
+    setlistsKey.currentState?.showAllSongs();
+    setState(() => idx = 0);
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
   void _openTuner({required int backIndex}) {
     _tunerBackIndex = backIndex;
     _onTabSelected(4);
@@ -69,8 +78,10 @@ class HomeScreenState extends State<HomeScreen> {
     required IconData icon,
     required String label,
     required int index,
+    bool? selectedOverride,
+    VoidCallback? onTap,
   }) {
-    final selected = idx == index;
+    final selected = selectedOverride ?? idx == index;
     final iconColor =
         selected ? const Color(0xFF151515) : const Color(0xFFD9D9D9);
     final textColor =
@@ -78,7 +89,7 @@ class HomeScreenState extends State<HomeScreen> {
 
     return Expanded(
       child: GestureDetector(
-        onTap: () => _onTabSelected(index),
+        onTap: onTap ?? () => _onTabSelected(index),
         behavior: HitTestBehavior.opaque,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 220),
@@ -103,12 +114,21 @@ class HomeScreenState extends State<HomeScreen> {
             children: [
               Icon(icon, color: iconColor, size: 24),
               const SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 11,
-                  fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+              SizedBox(
+                height: 14,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 11,
+                      fontWeight:
+                          selected ? FontWeight.w800 : FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -119,6 +139,10 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBottomBar() {
+    final currentTopTab = setlistsKey.currentState?.currentTopTab;
+    final inDashboardHome = idx == 0 && currentTopTab == -1;
+    final inAllSongs = idx == 0 && currentTopTab == 0;
+
     return SafeArea(
       minimum: const EdgeInsets.fromLTRB(18, 0, 18, 10),
       child: Container(
@@ -141,12 +165,19 @@ class HomeScreenState extends State<HomeScreen> {
         ),
         child: Row(
           children: [
-            _navItem(icon: Icons.home_rounded, label: "Ana Sayfa", index: 0),
+            _navItem(
+              icon: Icons.home_rounded,
+              label: "Ana Sayfa",
+              index: 0,
+              selectedOverride: inDashboardHome,
+            ),
             _navItem(icon: Icons.search_rounded, label: "Ara", index: 1),
             _navItem(
               icon: Icons.music_note_rounded,
-              label: "Şarkılar",
-              index: 2,
+              label: "Tüm Şarkılar",
+              index: 0,
+              selectedOverride: inAllSongs,
+              onTap: _openAllSongs,
             ),
             _navItem(
               icon: Icons.settings_rounded,
