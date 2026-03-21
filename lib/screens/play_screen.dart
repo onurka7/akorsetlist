@@ -1,9 +1,7 @@
 import 'dart:convert';
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:flutter/services.dart';
@@ -12,7 +10,6 @@ import '../models/song.dart';
 import '../repositories/setlist_repo.dart';
 import '../repositories/song_repo.dart';
 import '../state/ui_prefs.dart';
-import '../services/timed_chord_sheet_service.dart';
 
 class PlayScreen extends StatefulWidget {
   final int setlistId;
@@ -31,12 +28,8 @@ class PlayScreen extends StatefulWidget {
 class _PlayScreenState extends State<PlayScreen> {
   final setlistRepo = SetlistRepo();
   final songRepo = SongRepo();
-  final timedChordSheetService = TimedChordSheetService();
-  final AudioPlayer _audioPlayer = AudioPlayer();
 
   late final WebViewController controller;
-  StreamSubscription<Duration>? _audioPositionSub;
-  StreamSubscription<PlayerState>? _audioStateSub;
 
   List<Song> songs = [];
   int idx = 0;
@@ -52,11 +45,6 @@ class _PlayScreenState extends State<PlayScreen> {
 
   bool _pageReady = false;
   bool _pendingStageStart = false;
-  bool _hasTimedChordSheet = false;
-  bool _timedPlaybackRunning = false;
-  double _timedPlaybackRate = 1.0;
-  bool _timedSoundEnabled = true;
-  bool _timedUsesNativeAudio = false;
 
   void _handleChordColorChanged() {
     _applyReaderPrefs();
@@ -71,23 +59,6 @@ class _PlayScreenState extends State<PlayScreen> {
     super.initState();
     idx = widget.initialIndex;
     UiPrefs.chordColor.addListener(_handleChordColorChanged);
-
-    _audioPositionSub = _audioPlayer.positionStream.listen((position) async {
-      if (!_timedUsesNativeAudio || !_hasTimedChordSheet || !_pageReady) return;
-      try {
-        await controller.runJavaScript(
-          "if (window.timedSheet && window.timedSheet.syncToMs) window.timedSheet.syncToMs(${position.inMilliseconds});",
-        );
-      } catch (_) {}
-    });
-    _audioStateSub = _audioPlayer.playerStateStream.listen((state) {
-      if (!mounted || !_timedUsesNativeAudio) return;
-      final running = state.playing;
-      if (_timedPlaybackRunning == running) return;
-      setState(() {
-        _timedPlaybackRunning = running;
-      });
-    });
 
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -131,10 +102,6 @@ class _PlayScreenState extends State<PlayScreen> {
   @override
   void dispose() {
     UiPrefs.chordColor.removeListener(_handleChordColorChanged);
-    // dispose içinde await kullanmayalım
-    _audioPositionSub?.cancel();
-    _audioStateSub?.cancel();
-    _audioPlayer.dispose();
     _stageStopScroll();
     _exitStageUIMode();
     WakelockPlus.disable();
@@ -301,54 +268,6 @@ class _PlayScreenState extends State<PlayScreen> {
     }
 
     _pageReady = false;
-    _hasTimedChordSheet = false;
-    _timedPlaybackRunning = false;
-    _timedUsesNativeAudio = false;
-    await _audioPlayer.stop();
-
-    final timedChordSheet = await timedChordSheetService.buildFromSong(s);
-    if (timedChordSheet != null && timedChordSheet.lines.isNotEmpty) {
-      final timedChordSheetJson = s.timedChordSheetJson;
-      if ((timedChordSheetJson == null || timedChordSheetJson.isEmpty) &&
-          s.id != null) {
-        await songRepo.updateTimedChordSheetJson(
-          s.id!,
-          jsonEncode(timedChordSheet.toMap()),
-        );
-        songs[idx] = Song(
-          id: s.id,
-          title: s.title,
-          sourceUrl: s.sourceUrl,
-          importedAt: s.importedAt,
-          lastOpenedAt: s.lastOpenedAt,
-          playCount: s.playCount,
-          offlinePath: s.offlinePath,
-          audioPath: s.audioPath,
-          isFavorite: s.isFavorite,
-          timedChordSheetJson: jsonEncode(timedChordSheet.toMap()),
-        );
-      }
-      final audioPath = s.audioPath;
-      if (audioPath != null && audioPath.isNotEmpty) {
-        final audioFile = File(audioPath);
-        if (await audioFile.exists()) {
-          await _audioPlayer.setFilePath(audioPath);
-          await _audioPlayer.setSpeed(_timedPlaybackRate);
-          await _audioPlayer.setVolume(_timedSoundEnabled ? 1.0 : 0.0);
-          _timedUsesNativeAudio = true;
-        }
-      }
-      _hasTimedChordSheet = true;
-      _pendingStageStart = stageMode;
-      await controller.loadHtmlString(
-        timedChordSheetService.buildReaderHtml(
-          sheet: timedChordSheet,
-          title: s.title,
-        ),
-      );
-      if (mounted) setState(() {});
-      return;
-    }
 
     final p = s.offlinePath;
     if (p != null && p.isNotEmpty) {
@@ -538,38 +457,6 @@ class _PlayScreenState extends State<PlayScreen> {
       return;
     }
 
-    if (_hasTimedChordSheet) {
-      _timedPlaybackRunning = true;
-      if (mounted) setState(() {});
-      if (_timedUsesNativeAudio) {
-        try {
-          await controller.runJavaScript(
-            "if (window.timedSheet && window.timedSheet.syncToMs) window.timedSheet.syncToMs(${_audioPlayer.position.inMilliseconds});",
-          );
-        } catch (_) {}
-        await _audioPlayer.setSpeed(_timedPlaybackRate);
-        await _audioPlayer.setVolume(_timedSoundEnabled ? 1.0 : 0.0);
-        await _audioPlayer.play();
-        return;
-      }
-      try {
-        await controller.runJavaScript(
-          "if (window.timedSheet && window.timedSheet.setRate) window.timedSheet.setRate(${_timedPlaybackRate.toStringAsFixed(2)});",
-        );
-      } catch (_) {}
-      try {
-        await controller.runJavaScript(
-          "if (window.timedSheet && window.timedSheet.setSoundEnabled) window.timedSheet.setSoundEnabled(${_timedSoundEnabled ? 'true' : 'false'});",
-        );
-      } catch (_) {}
-      try {
-        await controller.runJavaScript(
-          "if (window.timedSheet && window.timedSheet.start) window.timedSheet.start();",
-        );
-      } catch (_) {}
-      return;
-    }
-
     try {
       await _ensureReaderScrollBridge();
     } catch (_) {}
@@ -589,20 +476,6 @@ class _PlayScreenState extends State<PlayScreen> {
 
   Future<void> _stageStopScroll() async {
     _pendingStageStart = false;
-    if (_hasTimedChordSheet) {
-      _timedPlaybackRunning = false;
-      if (mounted) setState(() {});
-      if (_timedUsesNativeAudio) {
-        await _audioPlayer.pause();
-        return;
-      }
-      try {
-        await controller.runJavaScript(
-          "if (window.timedSheet && window.timedSheet.stop) window.timedSheet.stop();",
-        );
-      } catch (_) {}
-      return;
-    }
     try {
       await controller.runJavaScript(
         "if (window.readerScroll && window.readerScroll.stop) window.readerScroll.stop();",
@@ -812,9 +685,6 @@ $stageExtra
   }
 
   Future<void> _showTransposeSheet() async {
-    if (_hasTimedChordSheet) {
-      return;
-    }
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -892,123 +762,6 @@ $stageExtra
     );
   }
 
-  Future<void> _setTimedPlaybackRate(double value) async {
-    _timedPlaybackRate = value.clamp(0.5, 2.0);
-    if (_timedUsesNativeAudio) {
-      await _audioPlayer.setSpeed(_timedPlaybackRate);
-    }
-    try {
-      await controller.runJavaScript(
-        "if (window.timedSheet && window.timedSheet.setRate) window.timedSheet.setRate(${_timedPlaybackRate.toStringAsFixed(2)});",
-      );
-    } catch (_) {}
-    if (!mounted) return;
-    setState(() {});
-  }
-
-  Future<void> _toggleTimedSound() async {
-    _timedSoundEnabled = !_timedSoundEnabled;
-    if (_timedUsesNativeAudio) {
-      await _audioPlayer.setVolume(_timedSoundEnabled ? 1.0 : 0.0);
-    }
-    try {
-      await controller.runJavaScript(
-        "if (window.timedSheet && window.timedSheet.setSoundEnabled) window.timedSheet.setSoundEnabled(${_timedSoundEnabled ? 'true' : 'false'});",
-      );
-    } catch (_) {}
-    if (!mounted) return;
-    setState(() {});
-  }
-
-  String _timedRateLabel() {
-    return '${_timedPlaybackRate.toStringAsFixed(2)}x';
-  }
-
-  Future<void> _showTimedPlaybackRateSheet() async {
-    if (!mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Çalma Hızı',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  _timedRateLabel(),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-                const SizedBox(height: 14),
-                Slider(
-                  min: 0.5,
-                  max: 2.0,
-                  value: _timedPlaybackRate,
-                  onChanged: (value) async {
-                    await _setTimedPlaybackRate(value);
-                    if (sheetContext.mounted) setSheetState(() {});
-                  },
-                ),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _SpeedPresetChip(
-                      label: '0.75x',
-                      selected: _timedPlaybackRate <= 0.8,
-                      onTap: () async {
-                        await _setTimedPlaybackRate(0.75);
-                        if (sheetContext.mounted) setSheetState(() {});
-                      },
-                    ),
-                    _SpeedPresetChip(
-                      label: '1.00x',
-                      selected:
-                          _timedPlaybackRate > 0.8 && _timedPlaybackRate <= 1.1,
-                      onTap: () async {
-                        await _setTimedPlaybackRate(1.0);
-                        if (sheetContext.mounted) setSheetState(() {});
-                      },
-                    ),
-                    _SpeedPresetChip(
-                      label: '1.25x',
-                      selected: _timedPlaybackRate > 1.1 &&
-                          _timedPlaybackRate <= 1.35,
-                      onTap: () async {
-                        await _setTimedPlaybackRate(1.25);
-                        if (sheetContext.mounted) setSheetState(() {});
-                      },
-                    ),
-                    _SpeedPresetChip(
-                      label: '1.50x',
-                      selected: _timedPlaybackRate > 1.35,
-                      onTap: () async {
-                        await _setTimedPlaybackRate(1.5);
-                        if (sheetContext.mounted) setSheetState(() {});
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   ({String songName, String artistName}) _parsedSongTitle() {
     if (songs.isEmpty) {
       return (songName: 'Çalma Modu', artistName: 'Notalar');
@@ -1039,54 +792,26 @@ $stageExtra
 
     if (stageMode) {
       actions.addAll([
-        if (_hasTimedChordSheet)
-          IconButton(
-            tooltip: _timedPlaybackRunning ? "Durdur" : "Başlat",
-            icon: Icon(
-              _timedPlaybackRunning ? Icons.pause_circle : Icons.play_circle,
-            ),
-            onPressed: () async {
-              if (_timedPlaybackRunning) {
-                await _stageStopScroll();
-              } else {
-                await _stageStartScroll();
-              }
-            },
-          ),
-        if (_hasTimedChordSheet)
-          IconButton(
-            tooltip: _timedSoundEnabled ? "Sesi Kapat" : "Sesi Aç",
-            icon: Icon(
-              _timedSoundEnabled
-                  ? Icons.volume_up_rounded
-                  : Icons.volume_off_rounded,
-            ),
-            onPressed: _toggleTimedSound,
-          ),
         IconButton(
           tooltip: touchLocked ? "Dokunmayı Aç" : "Dokunmayı Kilitle",
           icon: Icon(touchLocked ? Icons.lock : Icons.lock_open),
           onPressed: () => setState(() => touchLocked = !touchLocked),
         ),
         IconButton(
-          tooltip: _hasTimedChordSheet ? "Çalma Hızı" : "Scroll Hızı",
+          tooltip: "Scroll Hızı",
           icon: const Icon(Icons.speed_rounded),
-          onPressed: _hasTimedChordSheet
-              ? _showTimedPlaybackRateSheet
-              : _showAutoScrollSpeedSheet,
+          onPressed: _showAutoScrollSpeedSheet,
         ),
-        if (!_hasTimedChordSheet) ...[
-          IconButton(
-            tooltip: "Yavaşlat",
-            icon: const Icon(Icons.keyboard_arrow_down),
-            onPressed: () => _bumpScrollSpeed(-0.03),
-          ),
-          IconButton(
-            tooltip: "Hızlandır",
-            icon: const Icon(Icons.keyboard_arrow_up),
-            onPressed: () => _bumpScrollSpeed(0.03),
-          ),
-        ],
+        IconButton(
+          tooltip: "Yavaşlat",
+          icon: const Icon(Icons.keyboard_arrow_down),
+          onPressed: () => _bumpScrollSpeed(-0.03),
+        ),
+        IconButton(
+          tooltip: "Hızlandır",
+          icon: const Icon(Icons.keyboard_arrow_up),
+          onPressed: () => _bumpScrollSpeed(0.03),
+        ),
       ]);
     } else {
       actions.addAll([
@@ -1115,42 +840,15 @@ $stageExtra
             await _applyTranspose();
           },
         ),
-        if (!_hasTimedChordSheet)
-          IconButton(
-            tooltip: "Transpoze",
-            icon: const Icon(Icons.swap_vert_rounded),
-            onPressed: _showTransposeSheet,
-          ),
-        if (_hasTimedChordSheet)
-          IconButton(
-            tooltip: _timedPlaybackRunning ? "Durdur" : "Başlat",
-            icon: Icon(
-              _timedPlaybackRunning ? Icons.pause_circle : Icons.play_circle,
-            ),
-            onPressed: () async {
-              if (_timedPlaybackRunning) {
-                await _stageStopScroll();
-              } else {
-                await _stageStartScroll();
-              }
-            },
-          ),
-        if (_hasTimedChordSheet)
-          IconButton(
-            tooltip: _timedSoundEnabled ? "Sesi Kapat" : "Sesi Aç",
-            icon: Icon(
-              _timedSoundEnabled
-                  ? Icons.volume_up_rounded
-                  : Icons.volume_off_rounded,
-            ),
-            onPressed: _toggleTimedSound,
-          ),
         IconButton(
-          tooltip: _hasTimedChordSheet ? "Çalma Hızı" : "Scroll Hızı",
+          tooltip: "Transpoze",
+          icon: const Icon(Icons.swap_vert_rounded),
+          onPressed: _showTransposeSheet,
+        ),
+        IconButton(
+          tooltip: "Scroll Hızı",
           icon: const Icon(Icons.speed_rounded),
-          onPressed: _hasTimedChordSheet
-              ? _showTimedPlaybackRateSheet
-              : _showAutoScrollSpeedSheet,
+          onPressed: _showAutoScrollSpeedSheet,
         ),
       ]);
     }

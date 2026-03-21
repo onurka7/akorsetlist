@@ -1,7 +1,7 @@
 name: akor_setlist
 description: A new Flutter project.
 publish_to: 'none'
-version: 2.2.0+7
+version: 2.2.1+8
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
