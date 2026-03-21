@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "869089845708",
+    "project_id": "repertuarim-986b9",
+    "storage_bucket": "repertuarim-986b9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:869089845708:android:9636bab7f48e04f75e7d69",
+        "android_client_info": {
+          "package_name": "com.gitar.akorlist"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "869089845708-mon8o5qivgrsfl8k834nhs2av93k29q0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.gitar.akorlist",
+            "certificate_hash": "420d5b19733fcf1a894d1c769c03da2369f9d9fe"
+          }
+        },
+        {
+          "client_id": "869089845708-qepnrsu41dhp0d2m13mpade3699cpk7v.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB0YsTqzWWsnV4YS5kI5WIpjKwbIH03d70"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "869089845708-qepnrsu41dhp0d2m13mpade3699cpk7v.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "869089845708-1rlp559g1rhb8b3aa9da167je100b7jb.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.gitar.akorlist"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
