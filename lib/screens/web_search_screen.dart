@@ -141,7 +141,33 @@ class WebSearchScreenState extends State<WebSearchScreen> {
     final url = currentUrl;
     if (!url.startsWith("http")) return;
 
-    final rawHtmlObj = await c.runJavaScriptReturningResult(r"""
+    final rawHtml = _isAkormatikSongPage(url)
+        ? await _extractAkormatikRawText(c)
+        : await _extractGenericRawText(c);
+
+    if (rawHtml.trim().isEmpty) return;
+
+    if (!mounted) return;
+
+    final changed = await showImportModal(
+      context: context,
+      pageTitle: currentTitle.isNotEmpty ? currentTitle : url,
+      pageUrl: url,
+      rawHtml: rawHtml,
+      setlistId: selectedSetlistId,
+    );
+
+    if (changed == true) {
+      widget.onImported?.call();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Şarkı eklendi.")),
+      );
+    }
+  }
+
+  Future<String> _extractGenericRawText(WebViewController controller) async {
+    final rawHtmlObj = await controller.runJavaScriptReturningResult(r"""
 (() => {
   const selectors = [
     '#chords', '.chords', '.chord-area', '.akor', '.akorlar',
@@ -206,25 +232,110 @@ class WebSearchScreenState extends State<WebSearchScreen> {
 })();
 """);
 
-    final html = _normalizeJsResult(rawHtmlObj);
+    return _normalizeJsResult(rawHtmlObj);
+  }
 
-    if (!mounted) return;
+  Future<String> _extractAkormatikRawText(WebViewController controller) async {
+    final rawHtmlObj = await controller.runJavaScriptReturningResult(r"""
+(() => {
+  function textOf(node) {
+    if (!node) return '';
+    return (node.innerText || node.textContent || '').trim();
+  }
 
-    final changed = await showImportModal(
-      context: context,
-      pageTitle: currentTitle.isNotEmpty ? currentTitle : url,
-      pageUrl: url,
-      rawHtml: html,
-      setlistId: selectedSetlistId,
+  const candidates = [
+    'main',
+    'article',
+    '[role="main"]',
+    '.page',
+    '.content',
+    '.container',
+    '.song',
+    '.song-page',
+    '.song-detail',
+    '.chords',
+    '.akor',
+    '.akorlar',
+    '#song',
+    '#content',
+  ];
+
+  let best = '';
+  for (const selector of candidates) {
+    document.querySelectorAll(selector).forEach((node) => {
+      const text = textOf(node);
+      if (text.length > best.length && (text.includes('Bölüm') || text.includes('♩='))) {
+        best = text;
+      }
+    });
+  }
+
+  if (!best) {
+    best = textOf(document.body);
+  }
+
+  return best;
+})();
+""");
+
+    return _normalizeAkormatikRawText(_normalizeJsResult(rawHtmlObj));
+  }
+
+  bool _isAkormatikSongPage(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('akormatik.com/pages/song/');
+  }
+
+  String _normalizeAkormatikRawText(String value) {
+    var text = value
+        .replaceAll('\r', '')
+        .replaceAll('\u00a0', ' ')
+        .replaceAllMapped(RegExp(r'[ \t]+\n'), (m) => '\n')
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+
+    final lines = text
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+
+    if (lines.isEmpty) return '';
+
+    var startIndex = lines.indexWhere(
+      (line) => line.contains('♩=') || line.startsWith('Bölüm '),
     );
-
-    if (changed == true) {
-      widget.onImported?.call();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Şarkı eklendi.")),
+    if (startIndex < 0) {
+      startIndex = lines.indexWhere(
+        (line) => line.toLowerCase().contains('bölüm'),
       );
     }
+    if (startIndex < 0) {
+      startIndex = 0;
+    }
+
+    var endIndex = lines.length;
+    final endMarkers = [
+      'Benzer',
+      'Diğer Şarkılar',
+      'Yorum',
+      'Yorumlar',
+      'Reklam',
+      'Gizlilik',
+      'Kullanım Koşulları',
+      'Bize Ulaşın',
+      'Telif',
+    ];
+    for (var i = startIndex; i < lines.length; i++) {
+      final line = lines[i];
+      if (endMarkers.any((marker) => line.contains(marker))) {
+        endIndex = i;
+        break;
+      }
+    }
+
+    final normalized = lines.sublist(startIndex, endIndex).join('\n').trim();
+    return normalized;
   }
 
   String _normalizeJsResult(Object value) {

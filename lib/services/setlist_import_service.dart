@@ -48,6 +48,9 @@ class SetlistImportService {
       if (entry is! Map) continue;
       final title = (entry['title'] as String?)?.trim();
       final sourceUrl = (entry['sourceUrl'] as String?)?.trim();
+      final timedChordSheetJson =
+          (entry['timedChordSheetJson'] as String?)?.trim();
+      final audioPath = (entry['audioPath'] as String?)?.trim();
       final tone = (entry['tone'] as String?)?.trim();
       final durationMinutes = entry['durationMinutes'] as int?;
       if (title == null ||
@@ -67,6 +70,8 @@ class SetlistImportService {
               title: title,
               sourceUrl: sourceUrl,
               importedAt: DateTime.now().millisecondsSinceEpoch,
+              audioPath: audioPath,
+              timedChordSheetJson: timedChordSheetJson,
             ),
           );
       if (!addedSongIds.add(songId)) {

@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 
+import 'package:crypto/crypto.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 enum AuthProvider {
@@ -31,47 +34,23 @@ class AuthState {
 
   static final AuthState instance = AuthState._();
 
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: const ['email', 'profile'],
-  );
-
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   final ValueNotifier<AppUser?> currentUser = ValueNotifier<AppUser?>(null);
 
-  StreamSubscription<GoogleSignInAccount?>? _authSub;
+  StreamSubscription<User?>? _authSub;
   bool _initialized = false;
-
-  static const String _kProviderKey = 'auth.provider';
-  static const String _kAppleUserId = 'auth.apple.user_id';
-  static const String _kAppleEmail = 'auth.apple.email';
-  static const String _kAppleName = 'auth.apple.name';
 
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
 
-    _authSub = _googleSignIn.onCurrentUserChanged.listen((account) {
-      if (account == null) return;
-      currentUser.value = _fromGoogle(account);
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp();
+    }
+    _authSub = _auth.authStateChanges().listen((user) {
+      currentUser.value = _fromFirebaseUser(user);
     });
-
-    final cachedGoogle = _googleSignIn.currentUser;
-    if (cachedGoogle != null) {
-      currentUser.value = _fromGoogle(cachedGoogle);
-    }
-
-    try {
-      final silent = await _googleSignIn.signInSilently();
-      if (silent != null) {
-        currentUser.value = _fromGoogle(silent);
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(_kProviderKey, AuthProvider.google.name);
-        return;
-      }
-    } catch (_) {
-      // Session restore best effort.
-    }
-
-    await _restoreAppleSessionFromCache();
+    currentUser.value = _fromFirebaseUser(_auth.currentUser);
   }
 
   Future<AppUser?> signIn() async {
@@ -80,15 +59,10 @@ class AuthState {
 
   Future<AppUser?> signInWithGoogle() async {
     await initialize();
-    final account = await _googleSignIn.signIn();
-    if (account != null) {
-      final user = _fromGoogle(account);
-      currentUser.value = user;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_kProviderKey, AuthProvider.google.name);
-      return user;
-    }
-    return null;
+    final result = await _auth.signInWithProvider(GoogleAuthProvider());
+    final user = _fromFirebaseUser(result.user);
+    currentUser.value = user;
+    return user;
   }
 
   Future<AppUser?> signInWithApple() async {
@@ -97,88 +71,75 @@ class AuthState {
     final available = await SignInWithApple.isAvailable();
     if (!available) {
       throw Exception(
-          'Sign in with Apple is not available on this device. Please use Google Sign-In.');
+        'Sign in with Apple bu cihazda kullanilamiyor.',
+      );
     }
 
+    final rawNonce = _generateNonce();
+    final hashedNonce = _sha256OfString(rawNonce);
     final credential = await SignInWithApple.getAppleIDCredential(
       scopes: const [
         AppleIDAuthorizationScopes.email,
         AppleIDAuthorizationScopes.fullName,
       ],
+      nonce: hashedNonce,
     );
-    final userId = credential.userIdentifier;
-    if (userId == null || userId.isEmpty) {
-      throw Exception('Apple user identifier could not be retrieved.');
+
+    final identityToken = credential.identityToken;
+    if (identityToken == null || identityToken.isEmpty) {
+      throw Exception('Apple identity token alinamadi.');
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    final fallbackEmail = 'apple_$userId@privaterelay.local';
-    final email =
-        credential.email ?? prefs.getString(_kAppleEmail) ?? fallbackEmail;
-
-    final given = credential.givenName?.trim() ?? '';
-    final family = credential.familyName?.trim() ?? '';
-    final fullName = '$given $family'.trim();
-    final displayName = fullName.isNotEmpty
-        ? fullName
-        : (prefs.getString(_kAppleName) ?? 'Apple Kullanıcısı');
-
-    await prefs.setString(_kProviderKey, AuthProvider.apple.name);
-    await prefs.setString(_kAppleUserId, userId);
-    await prefs.setString(_kAppleEmail, email);
-    await prefs.setString(_kAppleName, displayName);
-
-    final user = AppUser(
-      id: userId,
-      email: email,
-      displayName: displayName,
-      provider: AuthProvider.apple,
+    final oauthCredential = OAuthProvider('apple.com').credential(
+      idToken: identityToken,
+      accessToken: credential.authorizationCode,
+      rawNonce: rawNonce,
     );
+
+    final result = await _auth.signInWithCredential(oauthCredential);
+    final user = _fromFirebaseUser(result.user);
     currentUser.value = user;
     return user;
   }
 
   Future<void> signOut() async {
-    final provider = currentUser.value?.provider;
-    try {
-      if (provider == AuthProvider.google) {
-        await _googleSignIn.signOut();
-      }
-    } catch (_) {}
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_kProviderKey);
+    await _auth.signOut();
     currentUser.value = null;
   }
 
-  Future<void> _restoreAppleSessionFromCache() async {
-    final prefs = await SharedPreferences.getInstance();
-    final provider = prefs.getString(_kProviderKey);
-    if (provider != AuthProvider.apple.name) return;
-
-    final id = prefs.getString(_kAppleUserId);
-    final email = prefs.getString(_kAppleEmail);
-    if (id == null || email == null || email.isEmpty) return;
-
-    currentUser.value = AppUser(
-      id: id,
-      email: email,
-      displayName: prefs.getString(_kAppleName) ?? 'Apple Kullanıcısı',
-      provider: AuthProvider.apple,
-    );
-  }
-
-  AppUser _fromGoogle(GoogleSignInAccount account) {
+  AppUser? _fromFirebaseUser(User? user) {
+    if (user == null) return null;
+    final providerId = user.providerData.isNotEmpty
+        ? user.providerData.first.providerId
+        : 'google.com';
+    final provider =
+        providerId == 'apple.com' ? AuthProvider.apple : AuthProvider.google;
     return AppUser(
-      id: account.id,
-      email: account.email,
-      displayName: account.displayName,
-      photoUrl: account.photoUrl,
-      provider: AuthProvider.google,
+      id: user.uid,
+      email: user.email ?? '',
+      displayName: user.displayName,
+      photoUrl: user.photoURL,
+      provider: provider,
     );
   }
 
   Future<void> dispose() async {
     await _authSub?.cancel();
     currentUser.dispose();
+  }
+
+  String _generateNonce([int length = 32]) {
+    const charset =
+        '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+    final random = Random.secure();
+    return List<String>.generate(
+      length,
+      (_) => charset[random.nextInt(charset.length)],
+    ).join();
+  }
+
+  String _sha256OfString(String input) {
+    final bytes = utf8.encode(input);
+    return sha256.convert(bytes).toString();
   }
 }

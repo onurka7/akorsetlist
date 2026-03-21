@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'chord_detection_screen.dart';
 import 'chords_screen.dart';
 import 'settings_screen.dart';
@@ -125,8 +126,7 @@ class HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(
                       color: textColor,
                       fontSize: 11,
-                      fontWeight:
-                          selected ? FontWeight.w800 : FontWeight.w700,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
                     ),
                   ),
                 ),
@@ -214,6 +214,7 @@ class HomeScreenState extends State<HomeScreen> {
               }
               if (action == 'chord_detection') {
                 _openChordDetection(backIndex: 0);
+                return;
               }
             },
             onActiveSetlistChanged: (setlistId) {

@@ -31,7 +31,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Gitar akordu için mikrofona erişim gerekir.</string>
 	<key>GIDClientID</key>
-	<string>828558352085-ofmbb35nibut1v2munotdpiqvdv1evmb.apps.googleusercontent.com</string>
+	<string>869089845708-1rlp559g1rhb8b3aa9da167je100b7jb.apps.googleusercontent.com</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -39,7 +39,7 @@
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
 				<array>
-					<string>com.googleusercontent.apps.828558352085-ofmbb35nibut1v2munotdpiqvdv1evmb</string>
+					<string>com.googleusercontent.apps.869089845708-1rlp559g1rhb8b3aa9da167je100b7jb</string>
 				</array>
 		</dict>
 	</array>

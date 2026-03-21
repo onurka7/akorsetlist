@@ -25,6 +25,15 @@ class UserStorageService {
     return dir;
   }
 
+  static Future<Directory> audioDirectory() async {
+    final root = await _userRootDirectory();
+    final dir = Directory(p.join(root.path, 'audio'));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
   static Future<Directory> _userRootDirectory() async {
     final docs = await getApplicationDocumentsDirectory();
     final email = AuthState.instance.currentUser.value?.email;

@@ -27,7 +27,7 @@ class AppDb {
 
     _db = await openDatabase(
       dbPath,
-      version: 6,
+      version: 9,
       onCreate: (db, _) async {
         await db.execute('''
           CREATE TABLE setlists(
@@ -47,7 +47,9 @@ class AppDb {
             lastOpenedAt INTEGER,
             playCount INTEGER NOT NULL DEFAULT 0,
             offlinePath TEXT,
-            isFavorite INTEGER NOT NULL DEFAULT 0
+            audioPath TEXT,
+            isFavorite INTEGER NOT NULL DEFAULT 0,
+            timedChordSheetJson TEXT
           );
         ''');
 
@@ -59,14 +61,6 @@ class AppDb {
             tone TEXT,
             durationMinutes INTEGER,
             PRIMARY KEY(setlistId, songId)
-          );
-        ''');
-
-        await db.execute('''
-          CREATE TABLE user_memberships(
-            email TEXT PRIMARY KEY,
-            plan TEXT NOT NULL,
-            updatedAt INTEGER NOT NULL
           );
         ''');
       },
@@ -84,15 +78,6 @@ class AppDb {
             'ALTER TABLE songs ADD COLUMN isFavorite INTEGER NOT NULL DEFAULT 0',
           );
         }
-        if (oldVersion < 5) {
-          await db.execute('''
-            CREATE TABLE user_memberships(
-              email TEXT PRIMARY KEY,
-              plan TEXT NOT NULL,
-              updatedAt INTEGER NOT NULL
-            );
-          ''');
-        }
         if (oldVersion < 6) {
           await db.execute(
             'ALTER TABLE setlist_items ADD COLUMN tone TEXT',
@@ -100,6 +85,19 @@ class AppDb {
           await db.execute(
             'ALTER TABLE setlist_items ADD COLUMN durationMinutes INTEGER',
           );
+        }
+        if (oldVersion < 7) {
+          await db.execute(
+            'ALTER TABLE songs ADD COLUMN timedChordSheetJson TEXT',
+          );
+        }
+        if (oldVersion < 8) {
+          await db.execute(
+            'ALTER TABLE songs ADD COLUMN audioPath TEXT',
+          );
+        }
+        if (oldVersion < 9) {
+          await db.execute('DROP TABLE IF EXISTS user_memberships');
         }
       },
     );

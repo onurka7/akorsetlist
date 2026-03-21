@@ -53,6 +53,19 @@ class SongRepo {
     await db.update('songs', s.toMap(), where: 'id = ?', whereArgs: [s.id]);
   }
 
+  Future<void> updateTimedChordSheetJson(
+    int songId,
+    String? timedChordSheetJson,
+  ) async {
+    final db = await _db.db;
+    await db.update(
+      'songs',
+      {'timedChordSheetJson': timedChordSheetJson},
+      where: 'id = ?',
+      whereArgs: [songId],
+    );
+  }
+
   Future<void> setFavorite(int songId, bool isFavorite) async {
     final db = await _db.db;
     await db.update(

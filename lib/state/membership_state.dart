@@ -39,9 +39,17 @@ class MembershipState {
       loading.value = false;
       return;
     }
-    // Paid app: all signed-in users have full access.
-    currentPlan.value = MembershipPlan.full;
-    await _repo.upsertPlan(email: user.email, plan: MembershipPlan.full);
+    final existing = await _repo.getPlanByUserId(user.id);
+    final effectivePlan = existing ?? MembershipPlan.full;
+    currentPlan.value = effectivePlan;
+    await _repo.upsertPlan(
+      userId: user.id,
+      email: user.email,
+      plan: effectivePlan,
+      displayName: user.displayName,
+      photoUrl: user.photoUrl,
+      provider: user.provider.name,
+    );
     loading.value = false;
   }
 
@@ -52,7 +60,14 @@ class MembershipState {
     }
     final user = AuthState.instance.currentUser.value;
     if (user == null) return;
-    await _repo.upsertPlan(email: user.email, plan: plan);
+    await _repo.upsertPlan(
+      userId: user.id,
+      email: user.email,
+      plan: plan,
+      displayName: user.displayName,
+      photoUrl: user.photoUrl,
+      provider: user.provider.name,
+    );
     currentPlan.value = plan;
   }
 

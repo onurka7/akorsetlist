@@ -36,10 +36,18 @@ class BackupService {
     for (final row in songs) {
       final song = Map<String, Object?>.from(row);
       final offlinePath = song['offlinePath'] as String?;
+      final audioPath = song['audioPath'] as String?;
       if (offlinePath != null && offlinePath.isNotEmpty) {
         final f = File(offlinePath);
         if (await f.exists()) {
           song['offlineHtml'] = await f.readAsString();
+        }
+      }
+      if (audioPath != null && audioPath.isNotEmpty) {
+        final f = File(audioPath);
+        if (await f.exists()) {
+          song['audioFileName'] = p.basename(audioPath);
+          song['audioBase64'] = base64Encode(await f.readAsBytes());
         }
       }
       songsJson.add(song);
@@ -128,11 +136,25 @@ class BackupService {
         if (id > maxSongId) maxSongId = id;
 
         String? offlinePath = row['offlinePath'] as String?;
+        String? audioPath = row['audioPath'] as String?;
         final offlineHtml = row['offlineHtml'] as String?;
+        final audioBase64 = row['audioBase64'] as String?;
+        final audioFileName = row['audioFileName'] as String?;
         if (offlineHtml != null && offlineHtml.isNotEmpty) {
           final restoredSong = File(p.join(songsDir.path, '$id.html'));
           await restoredSong.writeAsString(offlineHtml, flush: true);
           offlinePath = restoredSong.path;
+        }
+        if (audioBase64 != null &&
+            audioBase64.isNotEmpty &&
+            audioFileName != null &&
+            audioFileName.isNotEmpty) {
+          final audioDir = await UserStorageService.audioDirectory();
+          final restoredAudio =
+              File(p.join(audioDir.path, '${id}_$audioFileName'));
+          await restoredAudio.writeAsBytes(base64Decode(audioBase64),
+              flush: true);
+          audioPath = restoredAudio.path;
         }
 
         await txn.insert('songs', {
@@ -143,7 +165,9 @@ class BackupService {
           'lastOpenedAt': row['lastOpenedAt'],
           'playCount': row['playCount'] ?? 0,
           'offlinePath': offlinePath,
+          'audioPath': audioPath,
           'isFavorite': row['isFavorite'] ?? 0,
+          'timedChordSheetJson': row['timedChordSheetJson'],
         });
       }
 
