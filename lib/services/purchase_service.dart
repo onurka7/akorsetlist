@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:in_app_purchase/in_app_purchase.dart';
 
-const List<String> kFullUnlockProductIds = <String>[
-  'full_unlock',
-  'com.gitar.akorlist.full_unlock',
+const List<String> kAnnualPlanProductIds = <String>[
+  'annual_plan_100_try',
+  'com.gitar.akorlist.annual_plan_100_try',
 ];
 
 enum PurchaseFlowResult {
@@ -27,8 +27,9 @@ class PurchaseService {
 
   bool _initialized = false;
   bool _available = false;
-  ProductDetails? _fullProduct;
+  ProductDetails? _annualProduct;
   Completer<PurchaseFlowResult>? _pendingCompleter;
+  PurchaseDetails? _resolvedPurchase;
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -46,29 +47,37 @@ class PurchaseService {
 
   Future<void> _loadProducts() async {
     final response = await _iap.queryProductDetails(
-      kFullUnlockProductIds.toSet(),
+      kAnnualPlanProductIds.toSet(),
     );
     if (response.productDetails.isEmpty) {
-      _fullProduct = null;
+      _annualProduct = null;
       return;
     }
-    for (final id in kFullUnlockProductIds) {
+    for (final id in kAnnualPlanProductIds) {
       final match = response.productDetails.where((p) => p.id == id);
       if (match.isNotEmpty) {
-        _fullProduct = match.first;
+        _annualProduct = match.first;
         return;
       }
     }
-    _fullProduct = response.productDetails.first;
+    _annualProduct = response.productDetails.first;
   }
 
-  Future<PurchaseFlowResult> buyFullUnlock() async {
+  ProductDetails? get annualProduct => _annualProduct;
+
+  PurchaseDetails? takeResolvedPurchase() {
+    final purchase = _resolvedPurchase;
+    _resolvedPurchase = null;
+    return purchase;
+  }
+
+  Future<PurchaseFlowResult> buyAnnualPlan() async {
     await initialize();
     if (!_available) return PurchaseFlowResult.unavailable;
 
-    if (_fullProduct == null) {
+    if (_annualProduct == null) {
       await _loadProducts();
-      if (_fullProduct == null) return PurchaseFlowResult.productNotFound;
+      if (_annualProduct == null) return PurchaseFlowResult.productNotFound;
     }
 
     if (_pendingCompleter != null) return PurchaseFlowResult.failed;
@@ -77,7 +86,7 @@ class PurchaseService {
     _pendingCompleter = completer;
 
     final started = await _iap.buyNonConsumable(
-      purchaseParam: PurchaseParam(productDetails: _fullProduct!),
+      purchaseParam: PurchaseParam(productDetails: _annualProduct!),
     );
     if (!started) {
       _resolvePending(PurchaseFlowResult.failed);
@@ -91,7 +100,7 @@ class PurchaseService {
     return result;
   }
 
-  Future<PurchaseFlowResult> restoreFullUnlock() async {
+  Future<PurchaseFlowResult> restoreAnnualPlan() async {
     await initialize();
     if (!_available) return PurchaseFlowResult.unavailable;
 
@@ -112,7 +121,7 @@ class PurchaseService {
 
   void _onPurchaseUpdated(List<PurchaseDetails> updates) {
     for (final purchase in updates) {
-      if (!kFullUnlockProductIds.contains(purchase.productID)) {
+      if (!kAnnualPlanProductIds.contains(purchase.productID)) {
         if (purchase.pendingCompletePurchase) {
           _iap.completePurchase(purchase);
         }
@@ -123,9 +132,11 @@ class PurchaseService {
         case PurchaseStatus.pending:
           continue;
         case PurchaseStatus.purchased:
+          _resolvedPurchase = purchase;
           _resolvePending(PurchaseFlowResult.success);
           break;
         case PurchaseStatus.restored:
+          _resolvedPurchase = purchase;
           _resolvePending(PurchaseFlowResult.restored);
           break;
         case PurchaseStatus.canceled:
@@ -158,6 +169,7 @@ class PurchaseService {
     await _purchaseSub?.cancel();
     _purchaseSub = null;
     _pendingCompleter = null;
+    _resolvedPurchase = null;
     _initialized = false;
   }
 }

@@ -4,6 +4,7 @@ import '../models/membership_plan.dart';
 import '../state/auth_state.dart';
 import '../state/membership_state.dart';
 import 'home_screen.dart';
+import 'plan_selection_screen.dart';
 
 class AuthGateScreen extends StatefulWidget {
   final bool isDarkMode;
@@ -21,12 +22,17 @@ class AuthGateScreen extends StatefulWidget {
 
 class _AuthGateScreenState extends State<AuthGateScreen> {
   bool _authBusy = false;
+  String? _planPromptDismissedForUserId;
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder(
       valueListenable: AuthState.instance.currentUser,
       builder: (_, user, __) {
+        if (user == null) {
+          _planPromptDismissedForUserId = null;
+        }
+
         if (user == null && MembershipState.instance.isDemoMode) {
           return HomeScreen(
             key: const ValueKey('demo-mode'),
@@ -51,6 +57,22 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
             if (loading) {
               return const Scaffold(
                 body: Center(child: CircularProgressIndicator()),
+              );
+            }
+
+            final plan = MembershipState.instance.currentPlan.value;
+            final shouldShowPlanSelection = plan != MembershipPlan.annual &&
+                _planPromptDismissedForUserId != user.id;
+
+            if (shouldShowPlanSelection) {
+              return PlanSelectionScreen(
+                isDarkMode: widget.isDarkMode,
+                onCompleted: () {
+                  if (!mounted) return;
+                  setState(() {
+                    _planPromptDismissedForUserId = user.id;
+                  });
+                },
               );
             }
 
@@ -99,7 +121,7 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
 
   Future<void> _continueWithDemoMode() async {
     if (_authBusy) return;
-    MembershipState.instance.enableDemoMode(plan: MembershipPlan.full);
+    MembershipState.instance.enableDemoMode(plan: MembershipPlan.annual);
     if (!mounted) return;
     setState(() {});
   }

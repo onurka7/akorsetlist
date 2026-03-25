@@ -28,6 +28,7 @@ Future<bool?> showImportModal({
   final titleCtrl = TextEditingController(text: pageTitle);
   bool offline = true;
   bool favorite = false;
+  bool saving = false;
   String? selectedAudioPath;
 
   final setlists = await setlistRepo.listSetlists();
@@ -141,9 +142,12 @@ Future<bool?> showImportModal({
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: (setlists.isEmpty || selectedSetlistId == null)
+                  onPressed: (setlists.isEmpty ||
+                          selectedSetlistId == null ||
+                          saving)
                       ? null
                       : () async {
+                          setModalState(() => saving = true);
                           final canImport = await MembershipAccessService
                               .instance
                               .canImportSong();
@@ -152,10 +156,13 @@ Future<bool?> showImportModal({
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text(
-                                  'Free pakette en fazla 5 şarkı eklenebilir. Full üyelik gerekli.',
+                                  'Free planda en fazla 5 sarki eklenebilir. Yillik plan gerekli.',
                                 ),
                               ),
                             );
+                            if (modalContext.mounted) {
+                              setModalState(() => saving = false);
+                            }
                             return;
                           }
 
@@ -245,13 +252,14 @@ Future<bool?> showImportModal({
                             songId,
                           );
 
-                          if (!context.mounted) return;
-                          Navigator.pop(context, true);
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          if (!modalContext.mounted) return;
+                          final messenger = ScaffoldMessenger.of(context);
+                          Navigator.of(modalContext).pop(true);
+                          messenger.showSnackBar(
                             SnackBar(content: Text("Eklendi: $title")),
                           );
                         },
-                  child: const Text("Kaydet"),
+                  child: Text(saving ? "Kaydediliyor..." : "Kaydet"),
                 ),
               ),
               const SizedBox(height: 16),

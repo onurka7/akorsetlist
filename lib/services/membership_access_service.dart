@@ -13,17 +13,19 @@ class MembershipAccessService {
   final SongRepo _songRepo = SongRepo();
   final SetlistRepo _setlistRepo = SetlistRepo();
 
-  bool get isFull => MembershipState.instance.isFull;
+  bool get isAnnual => MembershipState.instance.isAnnual;
+  bool get isFull => isAnnual;
   bool get isFree => MembershipState.instance.isFree;
+  bool get canAccessPremiumTools => isAnnual;
 
   Future<bool> canCreateSetlist() async {
-    if (isFull) return true;
+    if (isAnnual) return true;
     final count = await _setlistRepo.countSetlists();
     return count < freeSetlistLimit;
   }
 
   Future<bool> canImportSong() async {
-    if (isFull) return true;
+    if (isAnnual) return true;
     final count = await _songRepo.countSongs();
     return count < freeSongLimit;
   }

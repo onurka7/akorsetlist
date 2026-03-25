@@ -140,7 +140,7 @@ class SetlistsScreenState extends State<SetlistsScreen> {
     if (!mounted) return;
     if (!canCreate) {
       _showMessage(
-        'Free pakette en fazla 1 setlist oluşturabilirsin. Full üyelik gerekli.',
+        'Free planda en fazla 1 setlist olusturabilirsin. Yillik plan gerekli.',
       );
       return;
     }
@@ -536,6 +536,8 @@ class SetlistsScreenState extends State<SetlistsScreen> {
   }
 
   Widget _buildQuickCards(bool isDark) {
+    final hasPremiumTools =
+        MembershipAccessService.instance.canAccessPremiumTools;
     final borderColor =
         isDark ? const Color(0xFF2D2D2D) : const Color(0xFFD8DDE6);
 
@@ -635,29 +637,31 @@ class SetlistsScreenState extends State<SetlistsScreen> {
           onTap: () => setState(() => _topTab = 2),
         ),
         const SizedBox(height: 10),
-        card(
-          icon: Icons.music_note_rounded,
-          title: 'Akorlar',
-          imageUrl:
-              'https://images.unsplash.com/photo-1525201548942-d8732f6617a0?auto=format&fit=crop&w=900&q=80',
-          onTap: () => widget.onQuickAction?.call('chords'),
-        ),
-        const SizedBox(height: 10),
-        card(
-          icon: Icons.tune_rounded,
-          title: 'Akort Yapma',
-          imageUrl:
-              'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=900&q=80',
-          onTap: () => widget.onQuickAction?.call('tuner'),
-        ),
-        const SizedBox(height: 10),
-        card(
-          icon: Icons.hearing_rounded,
-          title: 'Akort Çıkarma',
-          imageUrl:
-              'https://images.unsplash.com/photo-1464375117522-1311d6a5b81f?auto=format&fit=crop&w=900&q=80',
-          onTap: () => widget.onQuickAction?.call('chord_detection'),
-        ),
+        if (hasPremiumTools) ...[
+          card(
+            icon: Icons.music_note_rounded,
+            title: 'Akorlar',
+            imageUrl:
+                'https://images.unsplash.com/photo-1525201548942-d8732f6617a0?auto=format&fit=crop&w=900&q=80',
+            onTap: () => widget.onQuickAction?.call('chords'),
+          ),
+          const SizedBox(height: 10),
+          card(
+            icon: Icons.tune_rounded,
+            title: 'Akort Yapma',
+            imageUrl:
+                'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=900&q=80',
+            onTap: () => widget.onQuickAction?.call('tuner'),
+          ),
+          const SizedBox(height: 10),
+          card(
+            icon: Icons.hearing_rounded,
+            title: 'Akort Çıkarma',
+            imageUrl:
+                'https://images.unsplash.com/photo-1464375117522-1311d6a5b81f?auto=format&fit=crop&w=900&q=80',
+            onTap: () => widget.onQuickAction?.call('chord_detection'),
+          ),
+        ],
       ],
     );
   }

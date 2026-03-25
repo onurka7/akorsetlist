@@ -1,3 +1,4 @@
+import '../models/membership_profile.dart';
 import '../models/membership_plan.dart';
 import '../repositories/membership_repo.dart';
 import 'auth_state.dart';
@@ -9,6 +10,8 @@ class MembershipState {
   static final MembershipState instance = MembershipState._();
 
   final MembershipRepo _repo = MembershipRepo();
+  final ValueNotifier<MembershipProfile?> currentProfile =
+      ValueNotifier<MembershipProfile?>(null);
   final ValueNotifier<MembershipPlan?> currentPlan =
       ValueNotifier<MembershipPlan?>(null);
   final ValueNotifier<bool> loading = ValueNotifier<bool>(true);
@@ -35,21 +38,24 @@ class MembershipState {
     loading.value = true;
     final user = AuthState.instance.currentUser.value;
     if (user == null) {
-      currentPlan.value = null;
+      _setProfile(null);
       loading.value = false;
       return;
     }
-    final existing = await _repo.getPlanByUserId(user.id);
-    final effectivePlan = existing ?? MembershipPlan.full;
-    currentPlan.value = effectivePlan;
-    await _repo.upsertPlan(
-      userId: user.id,
-      email: user.email,
-      plan: effectivePlan,
-      displayName: user.displayName,
-      photoUrl: user.photoUrl,
-      provider: user.provider.name,
-    );
+    var profile = await _repo.getProfileByUserId(user.id);
+    if (profile == null) {
+      profile = const MembershipProfile(plan: MembershipPlan.free);
+      await _repo.upsertPlan(
+        userId: user.id,
+        email: user.email,
+        plan: profile.plan,
+        displayName: user.displayName,
+        photoUrl: user.photoUrl,
+        provider: user.provider.name,
+      );
+    }
+
+    _setProfile(profile);
     loading.value = false;
   }
 
@@ -64,23 +70,28 @@ class MembershipState {
       userId: user.id,
       email: user.email,
       plan: plan,
+      clearSubscriptionFields: plan == MembershipPlan.free,
       displayName: user.displayName,
       photoUrl: user.photoUrl,
       provider: user.provider.name,
     );
-    currentPlan.value = plan;
+    _setProfile(MembershipProfile(plan: plan));
   }
 
-  void enableDemoMode({MembershipPlan plan = MembershipPlan.full}) {
+  Future<void> reload() async {
+    await _reloadForCurrentUser();
+  }
+
+  void enableDemoMode({MembershipPlan plan = MembershipPlan.annual}) {
     _demoMode = true;
-    currentPlan.value = plan;
+    _setProfile(MembershipProfile(plan: plan));
     loading.value = false;
   }
 
   void disableDemoMode() {
     _demoMode = false;
     if (AuthState.instance.currentUser.value == null) {
-      currentPlan.value = null;
+      _setProfile(null);
       loading.value = false;
     }
   }
@@ -89,15 +100,22 @@ class MembershipState {
     _reloadForCurrentUser();
   }
 
-  bool get isFull => currentPlan.value == MembershipPlan.full;
+  bool get isAnnual => currentPlan.value == MembershipPlan.annual;
+  bool get isFull => isAnnual;
   bool get isFree => currentPlan.value == MembershipPlan.free;
   bool get isDemoMode => _demoMode;
+
+  void _setProfile(MembershipProfile? profile) {
+    currentProfile.value = profile;
+    currentPlan.value = profile?.plan;
+  }
 
   Future<void> dispose() async {
     final listener = _authListener;
     if (listener != null) {
       AuthState.instance.currentUser.removeListener(listener);
     }
+    currentProfile.dispose();
     currentPlan.dispose();
     loading.dispose();
   }

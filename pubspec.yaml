@@ -1,7 +1,7 @@
 name: akor_setlist
 description: A new Flutter project.
 publish_to: 'none'
-version: 2.2.1+8
+version: 2.2.2+9
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -29,6 +29,7 @@ dependencies:
   firebase_core: ^4.5.0
   firebase_auth: ^6.2.0
   cloud_firestore: ^6.1.3
+  cloud_functions: ^6.0.4
   flutter_secure_storage: ^10.0.0
   crypto: ^3.0.7
 
@@ -41,5 +42,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/audio/elfida.mp3

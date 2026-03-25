@@ -3,7 +3,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../db/app_db.dart';
+import '../models/membership_plan.dart';
 import '../services/backup_service.dart';
+import '../screens/plan_selection_screen.dart';
 import '../services/setlist_import_service.dart';
 import '../state/auth_state.dart';
 import '../state/membership_state.dart';
@@ -213,6 +215,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _openPlanScreen() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PlanSelectionScreen(
+          isDarkMode: widget.isDarkMode,
+          allowClose: true,
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = widget.isDarkMode;
@@ -224,6 +240,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final titleColor = isDark ? Colors.white : const Color(0xFF111827);
     final subtitleColor =
         isDark ? const Color(0xFFE1D0A2) : const Color(0xFF6B7280);
+    final activePlan = MembershipState.instance.currentPlan.value;
+    final planTitle = activePlan == null ? 'Plan yukleniyor' : activePlan.title;
+    final planSubtitle = activePlan == MembershipPlan.annual
+        ? 'Tum premium ozellikler acik'
+        : '5 sarki, 1 setlist ve sinirli erisim';
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -266,6 +287,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   activeThumbColor: const Color(0xFFFFC83D),
                   onChanged: (v) => widget.onThemeChanged?.call(v),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                decoration: BoxDecoration(
+                  color: cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: borderColor),
+                ),
+                child: ListTile(
+                  leading: const Icon(Icons.workspace_premium_rounded),
+                  title: Text(
+                    planTitle,
+                    style: TextStyle(color: titleColor),
+                  ),
+                  subtitle: Text(
+                    planSubtitle,
+                    style: TextStyle(color: subtitleColor),
+                  ),
+                  trailing: const Icon(
+                    Icons.chevron_right,
+                    color: Color(0xFFFFC83D),
+                  ),
+                  onTap: _openPlanScreen,
                 ),
               ),
               const SizedBox(height: 12),

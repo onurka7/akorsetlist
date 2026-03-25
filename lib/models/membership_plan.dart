@@ -1,16 +1,17 @@
 enum MembershipPlan {
   free,
-  full,
+  annual,
 }
 
 extension MembershipPlanX on MembershipPlan {
-  String get key => this == MembershipPlan.full ? 'full' : 'free';
+  String get key => this == MembershipPlan.annual ? 'annual' : 'free';
 
   String get title =>
-      this == MembershipPlan.full ? 'Full Üyelik' : 'Free Üyelik';
+      this == MembershipPlan.annual ? 'Yillik Plan' : 'Free Plan';
 
   static MembershipPlan? fromKey(String? key) {
-    if (key == 'full') return MembershipPlan.full;
+    if (key == 'annual') return MembershipPlan.annual;
+    if (key == 'full') return MembershipPlan.annual;
     if (key == 'free') return MembershipPlan.free;
     return null;
   }
