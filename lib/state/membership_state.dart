@@ -1,5 +1,6 @@
 import '../models/membership_profile.dart';
 import '../models/membership_plan.dart';
+import '../models/subscription_status.dart';
 import '../repositories/membership_repo.dart';
 import 'auth_state.dart';
 import 'package:flutter/material.dart';
@@ -55,6 +56,22 @@ class MembershipState {
       );
     }
 
+    final hasRecognizedAnnualAccess = profile.plan != MembershipPlan.annual ||
+        profile.subscriptionPlatform == 'app_store_local' ||
+        profile.subscriptionPlatform == 'app_store';
+    if (!hasRecognizedAnnualAccess) {
+      profile = const MembershipProfile(plan: MembershipPlan.free);
+      await _repo.upsertPlan(
+        userId: user.id,
+        email: user.email,
+        plan: MembershipPlan.free,
+        clearSubscriptionFields: true,
+        displayName: user.displayName,
+        photoUrl: user.photoUrl,
+        provider: user.provider.name,
+      );
+    }
+
     _setProfile(profile);
     loading.value = false;
   }
@@ -80,6 +97,37 @@ class MembershipState {
 
   Future<void> reload() async {
     await _reloadForCurrentUser();
+  }
+
+  Future<void> markAnnualPurchase() async {
+    if (_demoMode) {
+      _setProfile(
+        MembershipProfile(
+          plan: MembershipPlan.annual,
+          subscriptionStatus: SubscriptionStatus.active,
+          subscriptionPlatform: 'app_store_local',
+          subscriptionLastVerifiedAt: DateTime.now().toUtc(),
+        ),
+      );
+      return;
+    }
+    final user = AuthState.instance.currentUser.value;
+    if (user == null) return;
+
+    final profile = MembershipProfile(
+      plan: MembershipPlan.annual,
+      subscriptionStatus: SubscriptionStatus.active,
+      subscriptionPlatform: 'app_store_local',
+      subscriptionLastVerifiedAt: DateTime.now().toUtc(),
+    );
+    await _repo.markAnnualPurchase(
+      userId: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      photoUrl: user.photoUrl,
+      provider: user.provider.name,
+    );
+    _setProfile(profile);
   }
 
   void enableDemoMode({MembershipPlan plan = MembershipPlan.annual}) {

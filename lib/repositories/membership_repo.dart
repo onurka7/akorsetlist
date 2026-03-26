@@ -62,4 +62,24 @@ class MembershipRepo {
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
+
+  Future<void> markAnnualPurchase({
+    required String userId,
+    required String email,
+    String? displayName,
+    String? photoUrl,
+    String? provider,
+  }) async {
+    await upsertPlan(
+      userId: userId,
+      email: email,
+      plan: MembershipPlan.annual,
+      subscriptionStatus: SubscriptionStatus.active,
+      subscriptionPlatform: 'app_store_local',
+      subscriptionLastVerifiedAt: DateTime.now().toUtc(),
+      displayName: displayName,
+      photoUrl: photoUrl,
+      provider: provider,
+    );
+  }
 }

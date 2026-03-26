@@ -7,12 +7,14 @@ import '../state/membership_state.dart';
 class PlanSelectionScreen extends StatefulWidget {
   final bool isDarkMode;
   final VoidCallback? onCompleted;
+  final VoidCallback? onClosed;
   final bool allowClose;
 
   const PlanSelectionScreen({
     super.key,
     required this.isDarkMode,
     this.onCompleted,
+    this.onClosed,
     this.allowClose = false,
   });
 
@@ -22,6 +24,13 @@ class PlanSelectionScreen extends StatefulWidget {
 
 class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
   bool _busy = false;
+
+  void _close() {
+    widget.onClosed?.call();
+    if (widget.allowClose && mounted) {
+      Navigator.of(context).maybePop();
+    }
+  }
 
   Future<void> _selectFree() async {
     if (_busy) return;
@@ -44,7 +53,7 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
       switch (result) {
         case PurchaseFlowResult.success:
         case PurchaseFlowResult.restored:
-          await MembershipState.instance.selectPlan(MembershipPlan.annual);
+          await MembershipState.instance.markAnnualPurchase();
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Yıllık plan aktif edildi.')),
@@ -104,7 +113,7 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
 
       if (result == PurchaseFlowResult.success ||
           result == PurchaseFlowResult.restored) {
-        await MembershipState.instance.selectPlan(MembershipPlan.annual);
+        await MembershipState.instance.markAnnualPurchase();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Yıllık plan geri yüklendi.')),
@@ -157,11 +166,7 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
                 Align(
                   alignment: Alignment.centerRight,
                   child: IconButton(
-                    onPressed: _busy
-                        ? null
-                        : () {
-                            Navigator.of(context).maybePop();
-                          },
+                    onPressed: _close,
                     icon: const Icon(Icons.close_rounded),
                   ),
                 ),
@@ -224,6 +229,14 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
                   child: const Text('Satın almayı geri yükle'),
                 ),
               ),
+              const SizedBox(height: 8),
+              if (widget.allowClose)
+                Center(
+                  child: TextButton(
+                    onPressed: _close,
+                    child: const Text('Kapat'),
+                  ),
+                ),
             ],
           ),
         ),

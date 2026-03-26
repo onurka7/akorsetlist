@@ -67,7 +67,14 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
             if (shouldShowPlanSelection) {
               return PlanSelectionScreen(
                 isDarkMode: widget.isDarkMode,
+                allowClose: true,
                 onCompleted: () {
+                  if (!mounted) return;
+                  setState(() {
+                    _planPromptDismissedForUserId = user.id;
+                  });
+                },
+                onClosed: () {
                   if (!mounted) return;
                   setState(() {
                     _planPromptDismissedForUserId = user.id;
