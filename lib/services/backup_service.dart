@@ -20,14 +20,11 @@ class BackupService {
     final setlistsJson = <Map<String, Object?>>[];
     for (final row in setlists) {
       final setlist = Map<String, Object?>.from(row);
-      final coverPath = setlist['coverPath'] as String?;
-      if (coverPath != null && coverPath.isNotEmpty) {
-        final coverFile = File(coverPath);
-        if (await coverFile.exists()) {
-          final bytes = await coverFile.readAsBytes();
-          setlist['coverFileName'] = p.basename(coverPath);
-          setlist['coverBase64'] = base64Encode(bytes);
-        }
+      final coverPath = await UserStorageService.resolveStoredFile(
+          setlist['coverPath'] as String?, UserStorageService.coversDirectory);
+      if (coverPath != null) {
+        setlist['coverFileName'] = p.basename(coverPath);
+        setlist['coverBase64'] = base64Encode(await File(coverPath).readAsBytes());
       }
       setlistsJson.add(setlist);
     }
@@ -35,20 +32,16 @@ class BackupService {
     final songsJson = <Map<String, Object?>>[];
     for (final row in songs) {
       final song = Map<String, Object?>.from(row);
-      final offlinePath = song['offlinePath'] as String?;
-      final audioPath = song['audioPath'] as String?;
-      if (offlinePath != null && offlinePath.isNotEmpty) {
-        final f = File(offlinePath);
-        if (await f.exists()) {
-          song['offlineHtml'] = await f.readAsString();
-        }
+      final offlinePath = await UserStorageService.resolveStoredFile(
+          song['offlinePath'] as String?, UserStorageService.songsDirectory);
+      final audioPath = await UserStorageService.resolveStoredFile(
+          song['audioPath'] as String?, UserStorageService.audioDirectory);
+      if (offlinePath != null) {
+        song['offlineHtml'] = await File(offlinePath).readAsString();
       }
-      if (audioPath != null && audioPath.isNotEmpty) {
-        final f = File(audioPath);
-        if (await f.exists()) {
-          song['audioFileName'] = p.basename(audioPath);
-          song['audioBase64'] = base64Encode(await f.readAsBytes());
-        }
+      if (audioPath != null) {
+        song['audioFileName'] = p.basename(audioPath);
+        song['audioBase64'] = base64Encode(await File(audioPath).readAsBytes());
       }
       songsJson.add(song);
     }

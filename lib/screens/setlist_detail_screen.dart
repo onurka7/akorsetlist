@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
 import '../models/setlist.dart';
 import '../models/setlist_item.dart';
@@ -8,6 +10,8 @@ import '../models/song.dart';
 import '../repositories/setlist_repo.dart';
 import '../repositories/song_repo.dart';
 import '../services/setlist_share_service.dart';
+import '../services/user_storage_service.dart';
+import 'chord_analysis_screen.dart';
 import 'play_screen.dart';
 
 enum _SongSortMode { setlist, alphabetical, popular }
@@ -173,6 +177,15 @@ class _SetlistDetailScreenState extends State<SetlistDetailScreen> {
 
   Future<void> _onSongMenuSelected(String action, Song s) async {
     switch (action) {
+      case 'audio_attach':
+        await _attachAudioToSong(s);
+        break;
+      case 'audio_remove':
+        await _removeAudioFromSong(s);
+        break;
+      case 'chord_ai':
+        await _openChordAnalysis(s);
+        break;
       case 'meta':
         await _editSongMeta(s);
         break;
@@ -186,6 +199,123 @@ class _SetlistDetailScreenState extends State<SetlistDetailScreen> {
         await _deleteSongEverywhere(s);
         break;
     }
+  }
+
+  Future<void> _attachAudioToSong(Song s) async {
+    final songId = s.id;
+    if (songId == null) return;
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['wav', 'mp3', 'm4a', 'aac'],
+        withData: false,
+      );
+      final pickedPath = (picked == null || picked.files.isEmpty)
+          ? null
+          : picked.files.first.path;
+      if (pickedPath == null || pickedPath.isEmpty) return;
+
+      final input = File(pickedPath);
+      if (!await input.exists()) {
+        throw Exception('Secilen ses dosyasina erisilemedi.');
+      }
+
+      final audioDir = await UserStorageService.audioDirectory();
+      final extension = p.extension(pickedPath);
+      final target = File(
+        p.join(
+            audioDir.path, '$songId${extension.isEmpty ? '.wav' : extension}'),
+      );
+      await input.copy(target.path);
+
+      final previousPath = s.audioPath;
+      if (previousPath != null &&
+          previousPath.isNotEmpty &&
+          previousPath != target.path) {
+        final previousFile = File(previousPath);
+        if (await previousFile.exists()) {
+          await previousFile.delete();
+        }
+      }
+
+      await songRepo.updateSong(
+        Song(
+          id: songId,
+          title: s.title,
+          sourceUrl: s.sourceUrl,
+          importedAt: s.importedAt,
+          lastOpenedAt: s.lastOpenedAt,
+          playCount: s.playCount,
+          offlinePath: s.offlinePath,
+          audioPath: target.path,
+          isFavorite: s.isFavorite,
+          timedChordSheetJson: s.timedChordSheetJson,
+        ),
+      );
+
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ses dosyasi baglandi: ${p.basename(target.path)}'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ses dosyasi eklenemedi: $e')),
+      );
+    }
+  }
+
+  Future<void> _openChordAnalysis(Song s) async {
+    if (s.audioPath == null || s.audioPath!.isEmpty) return;
+    final audioPath = await UserStorageService.resolveStoredFile(s.audioPath, UserStorageService.audioDirectory);
+    if (audioPath == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bagli ses dosyasi bulunamadi.')),
+      );
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChordAnalysisScreen(audioPath: audioPath, title: s.title),
+      ),
+    );
+  }
+
+  Future<void> _removeAudioFromSong(Song s) async {
+    final songId = s.id;
+    if (songId == null) return;
+    final audioPath = s.audioPath;
+    if (audioPath == null || audioPath.isEmpty) return;
+
+    await songRepo.updateSong(
+      Song(
+        id: songId,
+        title: s.title,
+        sourceUrl: s.sourceUrl,
+        importedAt: s.importedAt,
+        lastOpenedAt: s.lastOpenedAt,
+        playCount: s.playCount,
+        offlinePath: s.offlinePath,
+        audioPath: null,
+        isFavorite: s.isFavorite,
+        timedChordSheetJson: s.timedChordSheetJson,
+      ),
+    );
+
+    final resolved = await UserStorageService.resolveStoredFile(audioPath, UserStorageService.audioDirectory);
+    if (resolved != null) await File(resolved).delete();
+
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Ses dosyasi kaldirildi.')),
+    );
   }
 
   Future<void> _toggleFavorite(Song s) async {
@@ -372,6 +502,7 @@ class _SetlistDetailScreenState extends State<SetlistDetailScreen> {
     final subtitle = [
       if (_sortMode == _SongSortMode.popular) _songSubtitle(s),
       if (metaSubtitle.isNotEmpty) metaSubtitle,
+      if (s.audioPath != null && s.audioPath!.isNotEmpty) 'Ses dosyasi bagli',
     ].where((e) => e.isNotEmpty).join('\n');
 
     return Slidable(
@@ -446,13 +577,32 @@ class _SetlistDetailScreenState extends State<SetlistDetailScreen> {
               ),
               PopupMenuButton<String>(
                 onSelected: (v) => _onSongMenuSelected(v, s),
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'meta', child: Text("Ton / süre")),
+                itemBuilder: (_) => [
                   PopupMenuItem(
+                    value: 'audio_attach',
+                    child: Text(
+                      s.audioPath != null && s.audioPath!.isNotEmpty
+                          ? 'Ses dosyasini degistir'
+                          : 'Bilgisayardan ses dosyasi ekle',
+                    ),
+                  ),
+                  if (s.audioPath != null && s.audioPath!.isNotEmpty)
+                    const PopupMenuItem(
+                      value: 'chord_ai',
+                      child: Text('AI ile akor çıkar'),
+                    ),
+                  if (s.audioPath != null && s.audioPath!.isNotEmpty)
+                    const PopupMenuItem(
+                      value: 'audio_remove',
+                      child: Text('Ses dosyasini kaldir'),
+                    ),
+                  const PopupMenuItem(value: 'meta', child: Text("Ton / süre")),
+                  const PopupMenuItem(
                       value: 'rename', child: Text("Düzenle (Ad değiştir)")),
-                  PopupMenuItem(
+                  const PopupMenuItem(
                       value: 'remove', child: Text("Setlist’ten kaldır")),
-                  PopupMenuItem(value: 'delete', child: Text("Tamamen sil")),
+                  const PopupMenuItem(
+                      value: 'delete', child: Text("Tamamen sil")),
                 ],
               ),
             ],

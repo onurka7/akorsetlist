@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'app.dart';
+import 'state/auth_state.dart';
+import 'state/membership_state.dart';
 import 'state/ui_prefs.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (Firebase.apps.isEmpty) {
-    await Firebase.initializeApp();
-  }
   await UiPrefs.initialize();
+  await AuthState.instance.initialize();
+  await MembershipState.instance.initialize();
   runApp(const AkorApp());
 }

@@ -1,6 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart';
 
+import '../models/song.dart';
+import '../models/timed_chord_sheet.dart';
+import 'timed_chord_sheet_service.dart';
 import 'user_storage_service.dart';
 
 class OfflineReaderService {
@@ -245,6 +249,33 @@ class OfflineReaderService {
 </body>
 </html>
 """;
+  }
+
+  /// Finds the saved reader page for [song], repairing a stale path.
+  ///
+  /// Stored paths are absolute, and iOS moves the app container on every
+  /// update/reinstall (the user folder also changes with the signed-in
+  /// account), so a saved file can look missing. Order: stored path, the
+  /// same file name in the current songs folder, then a page rebuilt from
+  /// the song's timed chord sheet. Null means only the web page is left.
+  Future<String?> resolveReaderPath(Song song) async {
+    final id = song.id;
+    final found = await UserStorageService.resolveStoredFile(
+      song.offlinePath ?? (id == null ? null : '$id.html'),
+      UserStorageService.songsDirectory,
+    );
+    if (found != null || id == null) return found;
+    final json = song.timedChordSheetJson;
+    if (json == null || json.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(json);
+      if (decoded is! Map) return null;
+      final sheet = TimedChordSheet.fromMap(Map<String, Object?>.from(decoded));
+      final html = TimedChordSheetService().buildReaderHtml(sheet: sheet, title: song.title);
+      return await saveOfflineHtml(songId: id, html: html);
+    } on FormatException {
+      return null;
+    }
   }
 
   Future<String> saveOfflineHtml(

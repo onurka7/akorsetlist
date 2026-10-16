@@ -5,7 +5,7 @@ import '../models/membership_plan.dart';
 import '../models/subscription_status.dart';
 
 class MembershipRepo {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  FirebaseFirestore get _firestore => FirebaseFirestore.instance;
 
   Future<MembershipProfile?> getProfileByUserId(String userId) async {
     final snapshot = await _firestore.collection('users').doc(userId).get();

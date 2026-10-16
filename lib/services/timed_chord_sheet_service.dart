@@ -162,55 +162,15 @@ class TimedChordSheetService {
     width:100%;
     height:100%;
   }
-  #sheetHud {
-    position:sticky;
-    top:0;
-    z-index:20;
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:12px;
-    margin:0 0 16px;
-    padding:10px 12px;
-    border:1px solid rgba(0,0,0,.08);
-    border-radius:16px;
-    background:rgba(255,255,255,.92);
-    backdrop-filter:blur(12px);
-  }
-  .ts-hud-pill {
-    display:inline-flex;
-    align-items:center;
-    gap:6px;
-    padding:6px 10px;
-    border-radius:999px;
-    background:#111;
-    color:#fff;
-    font-size:12px;
-    font-weight:800;
-  }
-  .ts-hud-meta {
-    display:flex;
-    flex-wrap:wrap;
-    gap:8px;
-    align-items:center;
-    color:#666;
-    font-size:12px;
-    font-weight:700;
-  }
   #sheetTitle {
-    margin:0 0 10px;
+    margin:0 0 16px;
     font-size:22px;
     font-weight:800;
-  }
-  #sheetMeta {
-    margin:0 0 18px;
-    color:#666;
-    font-size:13px;
-    font-weight:700;
+    line-height:1.2;
   }
   .ts-line {
-    margin:0 0 18px;
-    padding:10px 12px;
+    margin:0 0 10px;
+    padding:6px 8px;
     border-radius:14px;
     transition:background-color .18s ease, transform .18s ease;
   }
@@ -229,7 +189,7 @@ class TimedChordSheetService {
   .ts-row {
     display:flex;
     flex-wrap:wrap;
-    gap:10px 12px;
+    gap:4px 8px;
     align-items:flex-start;
   }
   .ts-segment {
@@ -238,7 +198,7 @@ class TimedChordSheetService {
     min-width:32px;
     transition:transform .16s ease;
     border-radius:10px;
-    padding:4px 6px;
+    padding:1px 3px;
     cursor:pointer;
   }
   .ts-segment.active {
@@ -248,14 +208,14 @@ class TimedChordSheetService {
   .ts-chord {
     color:#b00020;
     font-size:.88em;
-    line-height:1.1;
+    line-height:1.0;
     font-weight:900;
-    margin-bottom:2px;
+    margin-bottom:0;
   }
   .ts-lyric {
     color:inherit;
     font-size:1em;
-    line-height:1.5;
+    line-height:1.15;
     white-space:pre-wrap;
   }
   .ts-segment.active .ts-chord,
@@ -267,19 +227,7 @@ class TimedChordSheetService {
 <body>
   <div id="sheetRoot">
     ${hasYoutube ? '<div id="playerWrap"><div id="player"></div></div>' : ''}
-    <div id="sheetHud">
-      <div>
-        <h1 id="sheetTitle">$safeTitle</h1>
-        <p id="sheetMeta">Timed prototype • BPM <span id="sheetBpm"></span></p>
-      </div>
-      <div>
-        <div class="ts-hud-pill" id="sheetStatus">Hazır</div>
-        <div class="ts-hud-meta">
-          <span id="sheetSection">Bölüm yok</span>
-          <span id="sheetRate">1.00x</span>
-        </div>
-      </div>
-    </div>
+    <h1 id="sheetTitle">$safeTitle</h1>
     <div id="sheetLines"></div>
   </div>
 <script>
@@ -288,12 +236,10 @@ class TimedChordSheetService {
   const hasYoutube = !!(sheet.youtubeVideoId && String(sheet.youtubeVideoId).trim());
   const bpm = Number(sheet.bpm || 82);
   const linesHost = document.getElementById('sheetLines');
-  const bpmNode = document.getElementById('sheetBpm');
-  const statusNode = document.getElementById('sheetStatus');
-  const sectionNode = document.getElementById('sheetSection');
-  const rateNode = document.getElementById('sheetRate');
-  bpmNode.textContent = String(bpm);
-  rateNode.textContent = '1.00x';
+  // Playback state is kept internally; the page shows only the title.
+  const statusNode = { textContent: '' };
+  const sectionNode = { textContent: '' };
+  const rateNode = { textContent: '' };
 
   let running = false;
   let rate = 1.0;
