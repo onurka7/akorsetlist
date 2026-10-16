@@ -2,44 +2,14 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_audio_capture/flutter_audio_capture.dart';
 
-import '../services/chord_detector_service.dart';
-
-// Chord diagram data (name → 6 strings: -1 muted, 0 open, 1-5 fret)
-const Map<String, List<int>> _chordDiagrams = {
-  'C': [-1, 3, 2, 0, 1, 0],
-  'Cm': [-1, 3, 5, 5, 4, 3],
-  'C7': [-1, 3, 2, 3, 1, 0],
-  'Cm7': [-1, 3, 5, 3, 4, 3],
-  'Cmaj7': [-1, 3, 2, 0, 0, 0],
-  'D': [-1, -1, 0, 2, 3, 2],
-  'Dm': [-1, -1, 0, 2, 3, 1],
-  'D7': [-1, -1, 0, 2, 1, 2],
-  'Dm7': [-1, -1, 0, 2, 1, 1],
-  'E': [0, 2, 2, 1, 0, 0],
-  'Em': [0, 2, 2, 0, 0, 0],
-  'E7': [0, 2, 0, 1, 0, 0],
-  'Em7': [0, 2, 2, 0, 3, 0],
-  'F': [1, 3, 3, 2, 1, 1],
-  'Fm': [1, 3, 3, 1, 1, 1],
-  'F7': [1, 3, 1, 2, 1, 1],
-  'Fm7': [1, 3, 1, 1, 1, 1],
-  'G': [3, 2, 0, 0, 0, 3],
-  'Gm': [3, 5, 5, 3, 3, 3],
-  'G7': [3, 2, 0, 0, 0, 1],
-  'Gm7': [3, 5, 3, 3, 3, 3],
-  'Gmaj7': [3, 2, 0, 0, 0, 2],
-  'A': [-1, 0, 2, 2, 2, 0],
-  'Am': [-1, 0, 2, 2, 1, 0],
-  'A7': [-1, 0, 2, 0, 2, 0],
-  'Am7': [-1, 0, 2, 0, 1, 0],
-  'B': [-1, 2, 4, 4, 4, 2],
-  'Bm': [-1, 2, 4, 4, 3, 2],
-  'B7': [-1, 2, 1, 2, 0, 2],
-  'Bm7': [-1, 2, 4, 2, 3, 2],
-};
+import '../chord_ai/chord_analyzer.dart';
+import '../chord_ai/chord_theory.dart';
+import '../chord_ai/widgets/chord_diagram.dart';
+import 'chord_analysis_screen.dart';
 
 class ChordDetectionScreen extends StatefulWidget {
   final bool isDarkMode;
@@ -59,28 +29,21 @@ class ChordDetectionScreen extends StatefulWidget {
 
 class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
   final FlutterAudioCapture _audioCapture = FlutterAudioCapture();
-  static const double _minRms = 0.0022;
-  static const int _minScore = 2;
+  static const int _captureRate = 44100;
+  static const double _minLevel = 0.002;
+
+  // Same NNLS chroma + chord templates as the offline analyzer, with
+  // smoothing and a three-frame hysteresis before a chord is accepted.
+  final LiveChordTracker _tracker = LiveChordTracker(sampleRate: _captureRate);
 
   bool _listening = false;
-  bool _processing = false;
 
-  ChordMatch? _currentMatch;
+  String? _currentChord;
+  List<String> _detectedNotes = const [];
   final List<String> _history = [];
   final List<_ChordFlowSegment> _flow = [];
   String _status = 'Başlatmak için mikrofon ikonuna bas';
   int _stage = 0; // 0: idle, 1: signal, 2: note parse, 3: stable chord
-
-  // Buffer accumulator — collect multiple callbacks to fill fftSize
-  final List<double> _accumulated = [];
-
-  // Stability vote — require same chord N times before showing
-  final List<String> _votes = [];
-  static const int _voteWindow = 5;
-  static const int _requiredVotes = 2;
-  static const int _minSwitchMs = 320;
-  String? _stableChord;
-  int _lastStableAtMs = 0;
   int _lastGoodMatchAtMs = 0;
 
   Timer? _uiTimer;
@@ -99,8 +62,7 @@ class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
 
   Future<void> _startListening() async {
     if (_listening) return;
-    _accumulated.clear();
-    _votes.clear();
+    _tracker.reset();
     try {
       await _audioCapture.init();
       await _audioCapture.start(
@@ -109,7 +71,7 @@ class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
           if (!mounted) return;
           setState(() => _status = 'Mikrofon hatası: $err');
         },
-        sampleRate: ChordDetectorService.sampleRate,
+        sampleRate: _captureRate,
         bufferSize: 4096,
       );
       _uiTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
@@ -132,8 +94,7 @@ class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
       await _audioCapture.stop();
     } catch (_) {}
     _uiTimer?.cancel();
-    _accumulated.clear();
-    _votes.clear();
+    _tracker.reset();
     if (!mounted) return;
     setState(() {
       _listening = false;
@@ -143,105 +104,62 @@ class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
   }
 
   void _onBuffer(Float32List buffer) {
-    if (_processing) return;
-    _processing = true;
-    try {
-      // Accumulate samples until we have a full fftSize window
-      _accumulated.addAll(buffer);
-      if (_accumulated.length < ChordDetectorService.fftSize) return;
-
-      final window = Float32List.fromList(
-          _accumulated.take(ChordDetectorService.fftSize).toList());
-      // Slide by half a window for overlap
-      _accumulated.removeRange(0, ChordDetectorService.fftSize ~/ 2);
-
-      final rms = _rms(window);
-      if (rms < _minRms) {
-        _votes.clear();
-        final now = DateTime.now().millisecondsSinceEpoch;
-        if (_stableChord != null && (now - _lastGoodMatchAtMs) < 1500) {
-          _stage = 3;
-          _status = '3/3 Sinyal dalgalı — dinleme sürüyor';
-        } else {
-          _stage = 1;
-          _status = '1/3 Sinyal zayıf — mikrofona yaklaş';
-        }
-        return;
-      }
-
-      final match = ChordDetectorService.detect(window);
-      if (!mounted) return;
-
-      if (match != null && match.score >= _minScore) {
-        _stage = 2;
-        _lastGoodMatchAtMs = DateTime.now().millisecondsSinceEpoch;
-        // Stability vote: add to recent detections
-        _votes.add(match.name);
-        if (_votes.length > _voteWindow) _votes.removeAt(0);
-
-        // Show chord only if it appears in majority of vote window
-        final counts = <String, int>{};
-        for (final v in _votes) {
-          counts[v] = (counts[v] ?? 0) + 1;
-        }
-        final top = counts.entries.reduce((a, b) => a.value >= b.value ? a : b);
-
-        final canAcceptQuickly =
-            match.matchedCount >= 2 && match.extraCount <= 6;
-        if (top.value >= _requiredVotes || canAcceptQuickly) {
-          final now = DateTime.now().millisecondsSinceEpoch;
-          final shouldSwitch = _stableChord == null ||
-              _stableChord == top.key ||
-              (now - _lastStableAtMs) >= _minSwitchMs;
-          if (!shouldSwitch) {
-            _status = '3/3 Stabilize ediliyor…';
-            return;
-          }
-
-          final chosen = canAcceptQuickly ? match.name : top.key;
-          _stableChord = chosen;
-          _lastStableAtMs = now;
-          _currentMatch = ChordMatch(
-            name: chosen,
-            root: match.root,
-            type: match.type,
-            score: match.score,
-            matchedCount: match.matchedCount,
-            extraCount: match.extraCount,
-            detectedNotes: match.detectedNotes,
-          );
-          _stage = 3;
-          _status = '3/3 Dış sesten akor bulundu';
-          _appendFlow(chosen, now);
-          if (_history.isEmpty || _history.first != chosen) {
-            _history.insert(0, chosen);
-            if (_history.length > 12) _history.removeLast();
-          }
-        } else {
-          _status = '3/3 Stabilize ediliyor…';
-        }
+    final guess = _tracker.addSamples(buffer);
+    if (!mounted) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_tracker.level < _minLevel) {
+      if (_currentChord != null && (now - _lastGoodMatchAtMs) < 1500) {
+        _stage = 3;
+        _status = '3/3 Sinyal dalgalı — dinleme sürüyor';
       } else {
-        _votes.clear();
-        final now = DateTime.now().millisecondsSinceEpoch;
-        if (_stableChord != null && (now - _lastGoodMatchAtMs) < 1500) {
-          _stage = 3;
-          _status = '3/3 Sinyal izleniyor…';
-        } else {
-          _stage = 2;
-          _status = '2/3 Nota ayrıştırılamadı — tek akor bas';
-        }
+        _stage = 1;
+        _status = '1/3 Sinyal zayıf — mikrofona yaklaş';
       }
-    } finally {
-      _processing = false;
+      return;
     }
+    _detectedNotes = _tracker.activeNotes();
+    if (_tracker.current != 'N') _lastGoodMatchAtMs = now;
+    if (guess == null) {
+      if (_stage < 2) {
+        _stage = 2;
+        _status = '2/3 Notalar ayrıştırılıyor…';
+      }
+      return;
+    }
+    if (guess.name == 'N') {
+      _stage = 2;
+      _status = '2/3 Akor seçilemedi — tek akor bas';
+      return;
+    }
+    _currentChord = guess.name;
+    _stage = 3;
+    _status = '3/3 Dış sesten akor bulundu';
+    _appendFlow(guess.name, now);
+    if (_history.isEmpty || _history.first != guess.name) {
+      _history.insert(0, guess.name);
+      if (_history.length > 12) _history.removeLast();
+    }
+  }
+
+  Future<void> _analyzeFile() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['wav', 'mp3', 'm4a', 'aac'],
+    );
+    final path = picked?.files.single.path;
+    if (path == null || !mounted) return;
+    if (_listening) await _stopListening();
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ChordAnalysisScreen(audioPath: path, title: picked!.files.single.name),
+    ));
   }
 
   void _clearHistory() => setState(() {
         _history.clear();
         _flow.clear();
-        _currentMatch = null;
-        _stableChord = null;
-        _lastStableAtMs = 0;
+        _currentChord = null;
+        _tracker.reset();
         _stage = 1;
         _status = 'Dış ses dinleniyor';
       });
@@ -301,15 +219,6 @@ class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
     return counts;
   }
 
-  double _rms(Float32List samples) {
-    if (samples.isEmpty) return 0;
-    var sum = 0.0;
-    for (final s in samples) {
-      sum += s * s;
-    }
-    return sqrt(sum / samples.length);
-  }
-
   @override
   Widget build(BuildContext context) {
     final flowSummaryEntries = _flowSummary().entries.toList()
@@ -342,6 +251,11 @@ class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
             onPressed: widget.onGoHome,
             icon: const Icon(Icons.home_rounded),
             tooltip: 'Ana sayfa',
+          ),
+          IconButton(
+            onPressed: _analyzeFile,
+            icon: const Icon(Icons.audio_file_rounded),
+            tooltip: 'Dosyadan analiz et',
           ),
           IconButton(
             onPressed: _history.isNotEmpty ? _clearHistory : null,
@@ -417,10 +331,20 @@ class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
                     accent: accent,
                     subColor: subColor,
                   ),
+                  const SizedBox(height: 12),
+                  SegmentedButton<ChordSet>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(value: ChordSet.basic, label: Text('Temel')),
+                      ButtonSegment(value: ChordSet.full, label: Text('Hepsi')),
+                    ],
+                    selected: {_tracker.chordSet},
+                    onSelectionChanged: (v) => setState(() => _tracker.chordSet = v.first),
+                  ),
                   const SizedBox(height: 16),
-                  if (_currentMatch != null) ...[
+                  if (_currentChord != null) ...[
                     Text(
-                      _currentMatch!.name,
+                      _currentChord!,
                       style: TextStyle(
                         color: accent,
                         fontSize: 72,
@@ -430,31 +354,31 @@ class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Algılanan notalar: ${_currentMatch!.detectedNotes.join(' · ')}',
+                      _detectedNotes.isEmpty ? ' ' : 'Algılanan notalar: ${_detectedNotes.join(' · ')}',
                       style: TextStyle(color: subColor, fontSize: 13),
                     ),
                     const SizedBox(height: 16),
                     // Chord diagram
-                    if (_chordDiagrams.containsKey(_currentMatch!.name))
-                      SizedBox(
-                        height: 160,
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 32),
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? const Color(0xFF0D0D0D)
-                                : const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: borderColor),
-                          ),
-                          child: CustomPaint(
-                            painter: _ChordBoxPainter(
-                              strings: _chordDiagrams[_currentMatch!.name]!,
-                              isDark: isDark,
-                            ),
-                          ),
+                    Container(
+                      height: 170,
+                      margin: const EdgeInsets.symmetric(horizontal: 32),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? const Color(0xFF0D0D0D)
+                            : const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: borderColor),
+                      ),
+                      child: FittedBox(
+                        child: ChordDiagram(
+                          chord: _currentChord!,
+                          instrument: ChordInstrument.guitar,
+                          foreground: titleColor,
+                          accent: accent,
                         ),
                       ),
+                    ),
                   ] else
                     Column(
                       children: [
@@ -569,17 +493,7 @@ class _ChordDetectionScreenState extends State<ChordDetectionScreen> {
                   final isLatest = name == _history.first;
                   return GestureDetector(
                     onTap: () {
-                      setState(() {
-                        _currentMatch = ChordMatch(
-                          name: name,
-                          root: '',
-                          type: '',
-                          score: 0,
-                          matchedCount: 0,
-                          extraCount: 0,
-                          detectedNotes: const [],
-                        );
-                      });
+                      setState(() => _currentChord = name);
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -710,87 +624,4 @@ class _ChordFlowSegment {
     required this.endedAtMs,
     required this.hits,
   });
-}
-
-// ── Chord diagram painter ─────────────────────────────────────────────────────
-
-class _ChordBoxPainter extends CustomPainter {
-  final List<int> strings;
-  final bool isDark;
-
-  _ChordBoxPainter({required this.strings, required this.isDark});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final grid = Paint()
-      ..color = isDark ? const Color(0xFF3D3D3D) : const Color(0xFF8A94A6)
-      ..strokeWidth = 1.2
-      ..style = PaintingStyle.stroke;
-
-    final nut = Paint()
-      ..color = isDark ? const Color(0xFF8B8B8B) : const Color(0xFF4B5563)
-      ..strokeWidth = 2.2
-      ..style = PaintingStyle.stroke;
-
-    final dotPaint = Paint()
-      ..color = const Color(0xFFFFC83D)
-      ..style = PaintingStyle.fill;
-
-    final xoStyle = TextStyle(
-      color: isDark ? Colors.white : const Color(0xFF1F2937),
-      fontSize: 12,
-      fontWeight: FontWeight.w800,
-    );
-
-    const stringsCount = 6;
-    const fretsCount = 5;
-
-    final left = size.width * 0.12;
-    final right = size.width * 0.88;
-    final top = size.height * 0.26;
-    final bottom = size.height * 0.88;
-
-    final stringGap = (right - left) / (stringsCount - 1);
-    final fretGap = (bottom - top) / (fretsCount - 1);
-
-    // Vertical string lines
-    for (int s = 0; s < stringsCount; s++) {
-      final x = left + stringGap * s;
-      canvas.drawLine(Offset(x, top), Offset(x, bottom), grid);
-    }
-    // Horizontal fret lines
-    for (int f = 0; f < fretsCount; f++) {
-      final y = top + fretGap * f;
-      canvas.drawLine(Offset(left, y), Offset(right, y), grid);
-    }
-    // Nut
-    canvas.drawLine(Offset(left, top), Offset(right, top), nut);
-
-    // X / O markers above nut
-    for (int s = 0; s < stringsCount; s++) {
-      final state = s < strings.length ? strings[s] : -1;
-      final text = state < 0 ? 'X' : (state == 0 ? 'O' : '');
-      if (text.isEmpty) continue;
-      final tp = TextPainter(
-        text: TextSpan(text: text, style: xoStyle),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      final x = left + stringGap * s - tp.width / 2;
-      final y = top - tp.height - 4;
-      tp.paint(canvas, Offset(x, y));
-    }
-
-    // Fret dots
-    for (int s = 0; s < stringsCount; s++) {
-      final fret = s < strings.length ? strings[s] : -1;
-      if (fret <= 0) continue;
-      final x = left + stringGap * s;
-      final y = top + fretGap * (fret - 0.5);
-      canvas.drawCircle(Offset(x, y), 7, dotPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ChordBoxPainter old) =>
-      old.isDark != isDark || old.strings != strings;
 }

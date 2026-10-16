@@ -2,6 +2,7 @@ import '../db/app_db.dart';
 import '../models/setlist.dart';
 import '../models/song.dart';
 import '../models/setlist_item.dart';
+import 'package:sqflite/sqflite.dart';
 
 class SetlistRepo {
   final _db = AppDb.instance;
@@ -164,16 +165,29 @@ class SetlistRepo {
 
   Future<void> addSongToSetlist(int setlistId, int songId) async {
     final db = await _db.db;
+    final existing = await db.query(
+      'setlist_items',
+      columns: const ['songId'],
+      where: 'setlistId = ? AND songId = ?',
+      whereArgs: [setlistId, songId],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) return;
+
     final r = await db.rawQuery(
         'SELECT MAX(orderIndex) m FROM setlist_items WHERE setlistId=?',
         [setlistId]);
     final maxIdx = (r.first['m'] as int?) ?? -1;
-    await db.insert('setlist_items', {
-      'setlistId': setlistId,
-      'songId': songId,
-      'orderIndex': maxIdx + 1,
-      'tone': null,
-      'durationMinutes': null,
-    });
+    await db.insert(
+      'setlist_items',
+      {
+        'setlistId': setlistId,
+        'songId': songId,
+        'orderIndex': maxIdx + 1,
+        'tone': null,
+        'durationMinutes': null,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
   }
 }

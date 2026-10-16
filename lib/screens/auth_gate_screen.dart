@@ -173,7 +173,7 @@ class _AuthRequiredScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Sign in with Apple or Google to sync your setlists and chords.',
+                  'Apple veya Google ile giriş yapabilir ya da bu cihazda yerel olarak devam edebilirsin.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: fg.withValues(alpha: 0.75)),
                 ),
@@ -216,7 +216,7 @@ class _AuthRequiredScreen extends StatelessWidget {
                 TextButton(
                   onPressed: busy ? null : onDemo,
                   child: Text(
-                    'Kayıt olmadan dene',
+                    'Bu cihazda yerel kullan',
                     style: TextStyle(
                       color: fg.withValues(alpha: 0.5),
                       fontSize: 13,

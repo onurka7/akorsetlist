@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:flutter/services.dart';
@@ -9,7 +11,10 @@ import 'package:flutter/services.dart';
 import '../models/song.dart';
 import '../repositories/setlist_repo.dart';
 import '../repositories/song_repo.dart';
+import '../services/offline_reader_service.dart';
+import '../services/user_storage_service.dart';
 import '../state/ui_prefs.dart';
+import 'chord_analysis_screen.dart';
 
 class PlayScreen extends StatefulWidget {
   final int setlistId;
@@ -28,8 +33,13 @@ class PlayScreen extends StatefulWidget {
 class _PlayScreenState extends State<PlayScreen> {
   final setlistRepo = SetlistRepo();
   final songRepo = SongRepo();
+  final _offlineReader = OfflineReaderService();
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
   late final WebViewController controller;
+  StreamSubscription<PlayerState>? _playerStateSub;
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration?>? _durationSub;
 
   List<Song> songs = [];
   int idx = 0;
@@ -45,6 +55,10 @@ class _PlayScreenState extends State<PlayScreen> {
 
   bool _pageReady = false;
   bool _pendingStageStart = false;
+  bool _audioAvailable = false;
+  bool _audioLoading = false;
+  Duration _audioPosition = Duration.zero;
+  Duration _audioDuration = Duration.zero;
 
   void _handleChordColorChanged() {
     _applyReaderPrefs();
@@ -59,6 +73,21 @@ class _PlayScreenState extends State<PlayScreen> {
     super.initState();
     idx = widget.initialIndex;
     UiPrefs.chordColor.addListener(_handleChordColorChanged);
+    _playerStateSub = _audioPlayer.playerStateStream.listen((_) {
+      if (mounted) setState(() {});
+    });
+    _positionSub = _audioPlayer.positionStream.listen((position) {
+      if (!mounted) return;
+      setState(() {
+        _audioPosition = position;
+      });
+    });
+    _durationSub = _audioPlayer.durationStream.listen((duration) {
+      if (!mounted) return;
+      setState(() {
+        _audioDuration = duration ?? Duration.zero;
+      });
+    });
 
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -102,8 +131,12 @@ class _PlayScreenState extends State<PlayScreen> {
   @override
   void dispose() {
     UiPrefs.chordColor.removeListener(_handleChordColorChanged);
+    _playerStateSub?.cancel();
+    _positionSub?.cancel();
+    _durationSub?.cancel();
     _stageStopScroll();
     _exitStageUIMode();
+    _audioPlayer.dispose();
     WakelockPlus.disable();
     super.dispose();
   }
@@ -260,27 +293,208 @@ class _PlayScreenState extends State<PlayScreen> {
       await _stageStopScroll();
     }
 
-    setState(() => idx = newIndex);
+    setState(() {
+      // Each song opens in its own key; a transpose is per song.
+      if (newIndex != idx) transposeSteps = 0;
+      idx = newIndex;
+    });
 
     final s = songs[idx];
     if (s.id != null) {
       await songRepo.touchLastOpened(s.id!);
     }
+    await _prepareAudioForSong(s);
 
     _pageReady = false;
 
-    final p = s.offlinePath;
-    if (p != null && p.isNotEmpty) {
-      final f = File(p);
-      if (await f.exists()) {
-        _pendingStageStart = stageMode;
-        await controller.loadFile(p);
-        return;
+    final p = await _offlineReader.resolveReaderPath(s);
+    if (!mounted || songs.isEmpty || songs[idx].id != s.id) return;
+    if (p != null) {
+      if (p != s.offlinePath) {
+        final repaired = Song(
+          id: s.id,
+          title: s.title,
+          sourceUrl: s.sourceUrl,
+          importedAt: s.importedAt,
+          lastOpenedAt: s.lastOpenedAt,
+          playCount: s.playCount,
+          offlinePath: p,
+          audioPath: s.audioPath,
+          isFavorite: s.isFavorite,
+          timedChordSheetJson: s.timedChordSheetJson,
+        );
+        songs[idx] = repaired;
+        if (s.id != null) await songRepo.updateSong(repaired);
       }
+      _pendingStageStart = stageMode;
+      await controller.loadFile(p);
+      return;
     }
 
     _pendingStageStart = stageMode;
     await controller.loadRequest(Uri.parse(s.sourceUrl));
+  }
+
+  Future<void> _prepareAudioForSong(Song song) async {
+    final rawPath = await UserStorageService.resolveStoredFile(song.audioPath, UserStorageService.audioDirectory);
+    if (mounted) {
+      setState(() {
+        _audioLoading = true;
+        _audioAvailable = false;
+        _audioPosition = Duration.zero;
+        _audioDuration = Duration.zero;
+      });
+    }
+
+    await _audioPlayer.stop();
+
+    if (rawPath == null || rawPath.isEmpty) {
+      if (!mounted) return;
+      setState(() => _audioLoading = false);
+      return;
+    }
+
+    final audioFile = File(rawPath);
+    if (!await audioFile.exists()) {
+      if (!mounted) return;
+      setState(() => _audioLoading = false);
+      return;
+    }
+
+    try {
+      await _audioPlayer.setFilePath(rawPath);
+      if (!mounted) return;
+      setState(() {
+        _audioAvailable = true;
+        _audioLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _audioLoading = false);
+    }
+  }
+
+  Future<void> _openChordAnalysis() async {
+    if (songs.isEmpty) return;
+    final song = songs[idx];
+    final audioPath = song.audioPath;
+    if (audioPath == null || audioPath.isEmpty) return;
+    await _audioPlayer.pause();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            ChordAnalysisScreen(audioPath: audioPath, title: song.title),
+      ),
+    );
+  }
+
+  Future<void> _toggleAudioPlayback() async {
+    if (_audioLoading || !_audioAvailable) return;
+
+    final playerState = _audioPlayer.playerState;
+    if (playerState.processingState == ProcessingState.completed) {
+      await _audioPlayer.seek(Duration.zero);
+    }
+
+    if (_audioPlayer.playing) {
+      await _audioPlayer.pause();
+    } else {
+      await _audioPlayer.play();
+    }
+  }
+
+  String _formatAudioTime(Duration duration) {
+    final totalSeconds = duration.inSeconds;
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _seekAudio(double value) async {
+    final maxSeconds = _audioDuration.inMilliseconds <= 0
+        ? 0.0
+        : _audioDuration.inMilliseconds / 1000.0;
+    if (maxSeconds <= 0) return;
+    final targetSeconds = value.clamp(0.0, maxSeconds);
+    await _audioPlayer.seek(
+      Duration(milliseconds: (targetSeconds * 1000).round()),
+    );
+  }
+
+  Widget _buildAudioTimeline(Color foregroundColor) {
+    final totalSeconds = _audioDuration.inMilliseconds <= 0
+        ? 0.0
+        : _audioDuration.inMilliseconds / 1000.0;
+    final currentSeconds = _audioPosition.inMilliseconds <= 0
+        ? 0.0
+        : _audioPosition.inMilliseconds / 1000.0;
+    final sliderValue =
+        totalSeconds <= 0 ? 0.0 : currentSeconds.clamp(0.0, totalSeconds);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Column(
+        children: [
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: foregroundColor,
+              inactiveTrackColor: foregroundColor.withValues(alpha: 0.25),
+              thumbColor: foregroundColor,
+              overlayColor: foregroundColor.withValues(alpha: 0.14),
+            ),
+            child: Slider(
+              min: 0,
+              max: totalSeconds <= 0 ? 1 : totalSeconds,
+              value: sliderValue,
+              onChanged:
+                  _audioAvailable && totalSeconds > 0 ? _seekAudio : null,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              children: [
+                Text(
+                  _formatAudioTime(_audioPosition),
+                  style: TextStyle(
+                    color: foregroundColor.withValues(alpha: 0.82),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _audioAvailable ? _openChordAnalysis : null,
+                  icon: const Icon(Icons.graphic_eq_rounded, size: 16),
+                  label: const Text('AI Akorlar'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: foregroundColor,
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  _formatAudioTime(_audioDuration),
+                  style: TextStyle(
+                    color: foregroundColor.withValues(alpha: 0.82),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _next() async => _loadSongByIndex(idx + 1);
@@ -298,7 +512,8 @@ class _PlayScreenState extends State<PlayScreen> {
   if (!root) root = document.scrollingElement || document.documentElement || document.body;
 
   var running = false;
-  var speed = 0.18;
+  var speed = 0.18;   // px/frame @60fps, usually below one pixel
+  var carry = 0.0;
   var lastTs = 0;
 
   function tick(ts){
@@ -309,7 +524,14 @@ class _PlayScreenState extends State<PlayScreen> {
     var dt = (ts - lastTs) / 1000.0;
     lastTs = ts;
 
-    root.scrollTop += speed * (dt * 60.0);
+    // WebKit rounds scrollTop, so sub-pixel steps never moved the page;
+    // accumulate and apply whole pixels.
+    carry += speed * (dt * 60.0);
+    var stepPx = Math.floor(carry);
+    if (stepPx >= 1) {
+      root.scrollTop += stepPx;
+      carry -= stepPx;
+    }
 
     if (root.scrollTop + root.clientHeight >= root.scrollHeight - 1){
       stop();
@@ -322,12 +544,14 @@ class _PlayScreenState extends State<PlayScreen> {
     if (!root) return;
     if (running) return;
     running = true;
+    carry = 0.0;
     lastTs = 0;
     requestAnimationFrame(tick);
   }
 
   function stop(){
     running = false;
+    carry = 0.0;
     lastTs = 0;
   }
 
@@ -529,7 +753,8 @@ class _PlayScreenState extends State<PlayScreen> {
     final linkColor = darkMode ? "#8ab4f8" : "#1a73e8";
 
     final fontPx = (18 * fontScale).clamp(14, 34).toStringAsFixed(1);
-    final linePx = (26 * fontScale).clamp(20, 44).toStringAsFixed(1);
+    // Keep lyrics compact enough to fit more lines on stage-sized screens.
+    final linePx = (20 * fontScale).clamp(15, 31).toStringAsFixed(1);
 
     // 🎸 chord rengi
     final selectedChordColor = UiPrefs.chordColor.value;
@@ -589,6 +814,21 @@ a{ color:$linkColor !important; }
 
 .ts-chord{
   color:$chordColor !important;
+  line-height:1.0 !important;
+  margin-bottom:0 !important;
+}
+.ts-line{
+  margin:0 0 10px !important;
+  padding:6px 8px !important;
+}
+.ts-row{
+  gap:4px 8px !important;
+}
+.ts-segment{
+  padding:1px 3px !important;
+}
+.ts-lyric{
+  line-height:1.15 !important;
 }
 .ts-segment.active .ts-chord,
 .ts-segment.active .ts-lyric{
@@ -597,6 +837,14 @@ a{ color:$linkColor !important; }
 .ts-line.active{
   background:rgba(255,200,61,.16) !important;
 }
+/* Pages saved by older versions had a status bar ("Hazır", "Bölüm yok",
+   BPM); keep just the title. */
+#sheetMeta, .ts-hud-pill, .ts-hud-meta{ display:none !important; }
+#sheetHud{
+  position:static !important; display:block !important; padding:0 !important;
+  border:0 !important; background:none !important; backdrop-filter:none !important;
+}
+#sheetTitle{ color:$fg !important; }
 
 $stageExtra
 """;
@@ -630,30 +878,22 @@ $stageExtra
   Future<void> _applyTranspose() async {
     final js = """
 (() => {
-  const notes = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-  const flatToSharp = {
-    'Db': 'C#',
-    'Eb': 'D#',
-    'Gb': 'F#',
-    'Ab': 'G#',
-    'Bb': 'A#',
-  };
+  const sharps = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const flats = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 
-  function normalizeRoot(root) {
-    return flatToSharp[root] || root;
-  }
-
+  // A chord written with a flat stays in flats (Bb -> B -> C, Eb -> D).
   function transposeRoot(root, steps) {
-    const normalized = normalizeRoot(root);
-    const idx = notes.indexOf(normalized);
+    const r = String(root).replace('♯', '#').replace('♭', 'b');
+    let idx = sharps.indexOf(r);
+    if (idx < 0) idx = flats.indexOf(r);
     if (idx < 0) return root;
-    let next = (idx + steps) % notes.length;
-    if (next < 0) next += notes.length;
-    return notes[next];
+    let next = (idx + steps) % 12;
+    if (next < 0) next += 12;
+    return (r.indexOf('b') > 0 ? flats : sharps)[next];
   }
 
   function transposeChord(chord, steps) {
-    const match = String(chord || '').match(/^([A-G](?:#|b)?)(.*?)(?:\\/([A-G](?:#|b)?))?\$/);
+    const match = String(chord || '').match(/^([A-G](?:#|b|♯|♭)?)(.*?)(?:\\/([A-G](?:#|b|♯|♭)?))?\$/);
     if (!match) return chord;
     const root = transposeRoot(match[1], steps);
     const suffix = match[2] || '';
@@ -661,10 +901,12 @@ $stageExtra
     return root + suffix + bass;
   }
 
-  const nodes = document.querySelectorAll('#song .chord, #song .ay-chord, #song [data-chord], .chord, .ay-chord, [data-chord]');
+  // .ts-chord: timed sheets (akormatik imports); the rest: offline/web pages.
+  const nodes = document.querySelectorAll('.ts-chord, #song .chord, #song .ay-chord, #song [data-chord], .chord, .ay-chord, [data-chord]');
   for (const node of nodes) {
-    const original = node.dataset.originalChord || (node.textContent || '').trim();
+    const original = node.dataset.originalChord ?? (node.textContent || '').trim();
     node.dataset.originalChord = original;
+    if (!original) continue;
     node.textContent = transposeChord(original, $transposeSteps);
   }
 })();
@@ -782,11 +1024,37 @@ $stageExtra
   }
 
   List<Widget> _buildTopBarActions() {
+    final hasAudio = _audioAvailable;
+    final audioReady = !_audioLoading && hasAudio;
+    final isPlaying = _audioPlayer.playing;
     final actions = <Widget>[
       IconButton(
         tooltip: "Ana sayfa",
         icon: const Icon(Icons.home_rounded),
         onPressed: _goHome,
+      ),
+      // Recording button only when the song has audio attached.
+      if (hasAudio || _audioLoading)
+      IconButton(
+        tooltip: _audioLoading
+            ? "Ses dosyasi hazirlaniyor"
+            : hasAudio
+                ? (isPlaying ? "Kaydi durdur" : "Kaydi cal")
+                : "Bu sarki icin ses dosyasi bagli degil",
+        icon: _audioLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                hasAudio
+                    ? (isPlaying
+                        ? Icons.pause_circle_filled
+                        : Icons.play_circle_fill)
+                    : Icons.music_off_rounded,
+              ),
+        onPressed: audioReady ? _toggleAudioPlayback : null,
       ),
     ];
 
@@ -888,7 +1156,9 @@ $stageExtra
 
     return Scaffold(
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(108),
+        preferredSize: Size.fromHeight(
+          (_audioAvailable || _audioLoading) ? 156 : 108,
+        ),
         child: Material(
           color: headerBg,
           elevation: 2,
@@ -921,6 +1191,8 @@ $stageExtra
                     ),
                   ),
                 ),
+                if (_audioAvailable || _audioLoading)
+                  _buildAudioTimeline(headerFg),
               ],
             ),
           ),
@@ -931,8 +1203,6 @@ $stageExtra
           return Stack(
             children: [
               WebViewWidget(controller: controller),
-
-              // ✅ Overlay sadece STAGE MODE’da
               if (stageMode)
                 Positioned.fill(
                   child: IgnorePointer(

@@ -34,23 +34,34 @@ class AuthState {
 
   static final AuthState instance = AuthState._();
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
   final ValueNotifier<AppUser?> currentUser = ValueNotifier<AppUser?>(null);
 
+  FirebaseAuth? _auth;
   StreamSubscription<User?>? _authSub;
   bool _initialized = false;
+  bool _firebaseAvailable = false;
 
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
 
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp();
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+      _auth = FirebaseAuth.instance;
+      _firebaseAvailable = true;
+    } catch (_) {
+      _firebaseAvailable = false;
+      currentUser.value = null;
+      return;
     }
-    _authSub = _auth.authStateChanges().listen((user) {
+
+    final auth = _auth!;
+    _authSub = auth.authStateChanges().listen((user) {
       currentUser.value = _fromFirebaseUser(user);
     });
-    currentUser.value = _fromFirebaseUser(_auth.currentUser);
+    currentUser.value = _fromFirebaseUser(auth.currentUser);
   }
 
   Future<AppUser?> signIn() async {
@@ -59,7 +70,10 @@ class AuthState {
 
   Future<AppUser?> signInWithGoogle() async {
     await initialize();
-    final result = await _auth.signInWithProvider(GoogleAuthProvider());
+    if (!_firebaseAvailable || _auth == null) {
+      throw Exception('Bulut girisi bu masaustu yapida henuz ayarli degil.');
+    }
+    final result = await _auth!.signInWithProvider(GoogleAuthProvider());
     final user = _fromFirebaseUser(result.user);
     currentUser.value = user;
     return user;
@@ -67,6 +81,9 @@ class AuthState {
 
   Future<AppUser?> signInWithApple() async {
     await initialize();
+    if (!_firebaseAvailable || _auth == null) {
+      throw Exception('Bulut girisi bu masaustu yapida henuz ayarli degil.');
+    }
 
     final available = await SignInWithApple.isAvailable();
     if (!available) {
@@ -96,14 +113,19 @@ class AuthState {
       rawNonce: rawNonce,
     );
 
-    final result = await _auth.signInWithCredential(oauthCredential);
+    final result = await _auth!.signInWithCredential(oauthCredential);
     final user = _fromFirebaseUser(result.user);
     currentUser.value = user;
     return user;
   }
 
   Future<void> signOut() async {
-    await _auth.signOut();
+    final auth = _auth;
+    if (auth == null) {
+      currentUser.value = null;
+      return;
+    }
+    await auth.signOut();
     currentUser.value = null;
   }
 
@@ -127,6 +149,8 @@ class AuthState {
     await _authSub?.cancel();
     currentUser.dispose();
   }
+
+  bool get isFirebaseAvailable => _firebaseAvailable;
 
   String _generateNonce([int length = 32]) {
     const charset =

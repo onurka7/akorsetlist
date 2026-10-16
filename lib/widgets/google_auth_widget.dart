@@ -130,6 +130,7 @@ class _GoogleAuthWidgetState extends State<GoogleAuthWidget> {
     return ValueListenableBuilder<AppUser?>(
       valueListenable: AuthState.instance.currentUser,
       builder: (_, user, __) {
+        final cloudAvailable = AuthState.instance.isFirebaseAvailable;
         final signedIn = user != null;
         final name = signedIn
             ? (user.displayName ??
@@ -137,8 +138,11 @@ class _GoogleAuthWidgetState extends State<GoogleAuthWidget> {
                     ? 'Apple Kullanıcısı'
                     : 'Google Kullanıcısı'))
             : 'Giriş yapılmadı';
-        final subtitle =
-            signedIn ? user.email : 'Google veya Apple ile üye ol / giriş yap';
+        final subtitle = signedIn
+            ? user.email
+            : cloudAvailable
+                ? 'Google veya Apple ile üye ol / giriş yap'
+                : 'Bulut girisi bu masaustu acilisinda kullanilamiyor';
 
         if (widget.mode == GoogleAuthMode.listTile) {
           return ListTile(
@@ -155,7 +159,9 @@ class _GoogleAuthWidgetState extends State<GoogleAuthWidget> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : null,
-            onTap: _busy ? null : (signedIn ? _signOut : _signInGoogle),
+            onTap: _busy || (!signedIn && !cloudAvailable)
+                ? null
+                : (signedIn ? _signOut : _signInGoogle),
           );
         }
 
@@ -203,7 +209,7 @@ class _GoogleAuthWidgetState extends State<GoogleAuthWidget> {
                   )
                 else
                   FilledButton(
-                    onPressed: _busy ? null : _signInApple,
+                    onPressed: _busy || !cloudAvailable ? null : _signInApple,
                     child: const Text('Apple'),
                   ),
               ],
@@ -270,7 +276,7 @@ class _GoogleAuthWidgetState extends State<GoogleAuthWidget> {
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: _busy ? null : _signInGoogle,
+                        onPressed: _busy || !cloudAvailable ? null : _signInGoogle,
                         icon: const Icon(Icons.login),
                         label: const Text('Google'),
                       ),
@@ -278,7 +284,7 @@ class _GoogleAuthWidgetState extends State<GoogleAuthWidget> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: FilledButton.icon(
-                        onPressed: _busy ? null : _signInApple,
+                        onPressed: _busy || !cloudAvailable ? null : _signInApple,
                         icon: const Icon(Icons.apple),
                         label: const Text('Apple'),
                       ),
