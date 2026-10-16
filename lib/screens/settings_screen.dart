@@ -11,6 +11,7 @@ import '../state/auth_state.dart';
 import '../state/membership_state.dart';
 import '../state/ui_prefs.dart';
 import '../services/user_storage_service.dart';
+import '../repositories/membership_repo.dart';
 import '../widgets/google_auth_widget.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -177,8 +178,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Hesap ve Veriler Silinsin mi?'),
-        content: const Text(
-          'Bu işlem bu cihazdaki tüm setlist, şarkı ve hesap oturumunu siler. Geri alınamaz.',
+        content: Text(
+          AuthState.instance.currentUser.value == null
+              ? 'Bu işlem bu cihazdaki tüm setlist ve şarkıları siler. Geri alınamaz.'
+              : 'Hesabın kalıcı olarak silinir: bulut profilin, giriş hesabın ve bu cihazdaki tüm setlist ve şarkılar. '
+                  'Onay için tekrar giriş yapman istenecek. Geri alınamaz.\n\n'
+                  'Not: App Store aboneliğin otomatik iptal olmaz; Ayarlar > Apple ID > Abonelikler bölümünden iptal etmelisin.',
         ),
         actions: [
           TextButton(
@@ -197,10 +202,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _deleteBusy = true);
     try {
+      final signedIn = AuthState.instance.currentUser.value != null;
+      // Re-authenticate first: if the user cancels, nothing is deleted.
+      final uid = signedIn ? await AuthState.instance.reauthenticateForDeletion() : null;
+      if (uid != null) await MembershipRepo().deleteProfile(uid);
+      // Local data is scoped to the signed-in user, so delete it before the
+      // account goes away.
       await AppDb.instance.deleteCurrentUserDatabase();
       await UserStorageService.deleteCurrentUserStorage();
       MembershipState.instance.disableDemoMode();
-      await AuthState.instance.signOut();
+      if (signedIn) {
+        await AuthState.instance.deleteFirebaseAccount();
+      } else {
+        await AuthState.instance.signOut();
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Hesap ve cihaz verileri silindi.')),

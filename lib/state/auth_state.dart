@@ -129,6 +129,43 @@ class AuthState {
     currentUser.value = null;
   }
 
+  /// Step 1 of account deletion: signs the user in again (Firebase only
+  /// deletes accounts with a recent sign-in) and, for Sign in with Apple,
+  /// revokes the Apple token as App Store guideline 5.1.1(v) requires.
+  /// Throws if the user cancels; nothing is deleted at that point.
+  Future<String> reauthenticateForDeletion() async {
+    final auth = _auth;
+    final user = auth?.currentUser;
+    if (auth == null || user == null) throw Exception('Oturum açık değil.');
+    final isApple = user.providerData.any((p) => p.providerId == 'apple.com');
+    if (isApple) {
+      final rawNonce = _generateNonce();
+      final apple = await SignInWithApple.getAppleIDCredential(
+        scopes: const [],
+        nonce: _sha256OfString(rawNonce),
+      );
+      final idToken = apple.identityToken;
+      if (idToken == null || idToken.isEmpty) throw Exception('Apple identity token alınamadı.');
+      await user.reauthenticateWithCredential(OAuthProvider('apple.com').credential(
+        idToken: idToken,
+        accessToken: apple.authorizationCode,
+        rawNonce: rawNonce,
+      ));
+      await auth.revokeTokenWithAuthorizationCode(apple.authorizationCode);
+    } else {
+      await user.reauthenticateWithProvider(GoogleAuthProvider());
+    }
+    return user.uid;
+  }
+
+  /// Step 2 of account deletion: removes the Firebase Auth account. Call
+  /// after the user's cloud and local data have been deleted.
+  Future<void> deleteFirebaseAccount() async {
+    final user = _auth?.currentUser;
+    if (user != null) await user.delete();
+    currentUser.value = null;
+  }
+
   AppUser? _fromFirebaseUser(User? user) {
     if (user == null) return null;
     final providerId = user.providerData.isNotEmpty

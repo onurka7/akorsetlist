@@ -2,8 +2,11 @@ import '../models/membership_profile.dart';
 import '../models/membership_plan.dart';
 import '../models/subscription_status.dart';
 import '../repositories/membership_repo.dart';
+import '../services/subscription_sync_service.dart';
 import 'auth_state.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class MembershipState {
@@ -119,7 +122,27 @@ class MembershipState {
     await _reloadForCurrentUser();
   }
 
-  Future<void> markAnnualPurchase() async {
+  /// Activates the annual plan after a store purchase/restore.
+  ///
+  /// With a [purchase], the receipt is verified server-side first
+  /// (verifyAppleSubscriptionReceipt writes the profile). Only when the
+  /// function is not reachable (not deployed / offline) does it fall back to
+  /// the local mark; a receipt Apple rejects is not granted.
+  Future<void> markAnnualPurchase({PurchaseDetails? purchase}) async {
+    if (!_demoMode && purchase != null && AuthState.instance.currentUser.value != null) {
+      try {
+        final verified = await SubscriptionSyncService.instance.verifyAppleSubscriptionPurchase(purchase);
+        _setProfile(verified);
+        if (verified.plan != MembershipPlan.annual) {
+          throw Exception('Apple aboneliği aktif görünmüyor.');
+        }
+        return;
+      } on FirebaseFunctionsException catch (e) {
+        const unreachable = {'not-found', 'unavailable', 'deadline-exceeded'};
+        if (!unreachable.contains(e.code)) rethrow;
+        debugPrint('MembershipState: receipt check unavailable (${e.code}), using local mark');
+      }
+    }
     if (_demoMode) {
       _setProfile(
         MembershipProfile(

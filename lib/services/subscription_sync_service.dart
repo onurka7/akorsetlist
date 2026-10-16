@@ -8,7 +8,9 @@ class SubscriptionSyncService {
 
   static final SubscriptionSyncService instance = SubscriptionSyncService._();
 
-  final FirebaseFunctions _functions = FirebaseFunctions.instance;
+  // The callables are deployed in europe-west1 (functions/index.js); the
+  // default instance would call us-central1 and never reach them.
+  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   Future<MembershipProfile> verifyAppleSubscriptionPurchase(
     PurchaseDetails purchase,

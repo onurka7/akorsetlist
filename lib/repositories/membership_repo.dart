@@ -13,6 +13,10 @@ class MembershipRepo {
     return MembershipProfile.fromMap(snapshot.data());
   }
 
+  /// Removes the user's profile document (account deletion).
+  Future<void> deleteProfile(String userId) =>
+      _firestore.collection('users').doc(userId).delete();
+
   Future<MembershipPlan?> getPlanByUserId(String userId) async {
     final profile = await getProfileByUserId(userId);
     return profile?.plan;

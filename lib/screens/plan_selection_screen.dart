@@ -53,7 +53,9 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
       switch (result) {
         case PurchaseFlowResult.success:
         case PurchaseFlowResult.restored:
-          await MembershipState.instance.markAnnualPurchase();
+          await MembershipState.instance.markAnnualPurchase(
+            purchase: PurchaseService.instance.takeResolvedPurchase(),
+          );
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Yıllık plan aktif edildi.')),
@@ -113,7 +115,9 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
 
       if (result == PurchaseFlowResult.success ||
           result == PurchaseFlowResult.restored) {
-        await MembershipState.instance.markAnnualPurchase();
+        await MembershipState.instance.markAnnualPurchase(
+          purchase: PurchaseService.instance.takeResolvedPurchase(),
+        );
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Yıllık plan geri yüklendi.')),
