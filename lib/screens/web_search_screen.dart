@@ -2,18 +2,24 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import '../models/song.dart';
+import '../services/song_title.dart';
 import '../widgets/import_modal.dart';
 
 class WebSearchScreen extends StatefulWidget {
   final int setlistId;
   final VoidCallback? onImported;
   final VoidCallback? onGoHome;
+  final String? initialQuery;
+  final Song? existingSong;
 
   const WebSearchScreen({
     super.key,
     required this.setlistId,
     this.onImported,
     this.onGoHome,
+    this.initialQuery,
+    this.existingSong,
   });
 
   @override
@@ -101,6 +107,11 @@ class WebSearchScreenState extends State<WebSearchScreen> {
   @override
   void initState() {
     super.initState();
+    final initialQuery = widget.initialQuery?.trim();
+    if (initialQuery != null && initialQuery.isNotEmpty) {
+      queryController.text = initialQuery;
+      _hasSearched = true;
+    }
     _initWebView();
   }
 
@@ -147,23 +158,62 @@ class WebSearchScreenState extends State<WebSearchScreen> {
 
     if (rawHtml.trim().isEmpty) return;
 
+    final title = await _songTitle(c, url);
     if (!mounted) return;
 
     final changed = await showImportModal(
       context: context,
-      pageTitle: currentTitle.isNotEmpty ? currentTitle : url,
+      pageTitle: title,
       pageUrl: url,
       rawHtml: rawHtml,
       setlistId: selectedSetlistId,
+      existingSong: widget.existingSong,
     );
 
     if (changed == true) {
+      _resetToStart();
       widget.onImported?.call();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Şarkı eklendi.")),
       );
     }
+  }
+
+  /// "Şarkıcı - Şarkı" for the import form. Read at import time: the title
+  /// cached on page finish can still belong to the previous (search) page.
+  Future<String> _songTitle(WebViewController c, String url) async {
+    String? artist, song;
+    if (_isAkormatikSongPage(url)) {
+      try {
+        final r = _normalizeJsResult(await c.runJavaScriptReturningResult(
+          "(() => { const t = (s) => (document.querySelector(s)?.textContent || '').trim(); "
+          "return JSON.stringify({ artist: t('.artist-name'), song: t('.song-name') }); })()",
+        ));
+        final m = jsonDecode(r) as Map<String, dynamic>;
+        artist = m['artist'] as String?;
+        song = m['song'] as String?;
+      } catch (_) {}
+    }
+    String? pageTitle;
+    try {
+      pageTitle = await c.getTitle();
+    } catch (_) {}
+    final title = songTitleFrom(artist: artist, song: song, pageTitle: pageTitle ?? currentTitle);
+    return title.isEmpty ? url : title;
+  }
+
+  /// After a successful import the tab starts fresh (search list, no page)
+  /// instead of coming back to the last web page.
+  void _resetToStart() {
+    queryController.clear();
+    controller?.loadRequest(Uri.parse('about:blank'));
+    if (!mounted) return;
+    setState(() {
+      _hasSearched = false;
+      currentUrl = 'about:blank';
+      currentTitle = '';
+    });
   }
 
   Future<String> _extractGenericRawText(WebViewController controller) async {
@@ -364,6 +414,12 @@ class WebSearchScreenState extends State<WebSearchScreen> {
               final t = await c.getTitle();
               if (!mounted) return;
               setState(() => currentTitle = t ?? "");
+              final initialQuery = widget.initialQuery?.trim();
+              if (initialQuery != null &&
+                  initialQuery.isNotEmpty &&
+                  currentUrl == "about:blank") {
+                await _search(query: initialQuery, appendAkor: true);
+              }
             },
           ),
         )

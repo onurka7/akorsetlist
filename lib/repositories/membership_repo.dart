@@ -5,13 +5,17 @@ import '../models/membership_plan.dart';
 import '../models/subscription_status.dart';
 
 class MembershipRepo {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  FirebaseFirestore get _firestore => FirebaseFirestore.instance;
 
   Future<MembershipProfile?> getProfileByUserId(String userId) async {
     final snapshot = await _firestore.collection('users').doc(userId).get();
     if (!snapshot.exists) return null;
     return MembershipProfile.fromMap(snapshot.data());
   }
+
+  /// Removes the user's profile document (account deletion).
+  Future<void> deleteProfile(String userId) =>
+      _firestore.collection('users').doc(userId).delete();
 
   Future<MembershipPlan?> getPlanByUserId(String userId) async {
     final profile = await getProfileByUserId(userId);

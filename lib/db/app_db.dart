@@ -114,6 +114,13 @@ class AppDb {
     final userDbFile = File(userDbPath);
     if (await userDbFile.exists()) return userDbPath;
 
+    final sandboxDbPath = await _oldSandboxDbPath(userKey);
+    if (sandboxDbPath != null) {
+      await userDbFile.parent.create(recursive: true);
+      await File(sandboxDbPath).copy(userDbPath);
+      return userDbPath;
+    }
+
     final legacyDbFile = File(legacyPath);
     if (!await legacyDbFile.exists()) return userDbPath;
 
@@ -155,5 +162,23 @@ class AppDb {
     final dbDir = await getDatabasesPath();
     final userKey = UserScope.keyFromEmail(email);
     return join(dbDir, 'akor_setlist_$userKey.db');
+  }
+
+  Future<String?> _oldSandboxDbPath(String userKey) async {
+    if (!Platform.isMacOS) return null;
+    final home = Platform.environment['HOME'];
+    if (home == null || home.isEmpty) return null;
+    final candidate = join(
+      home,
+      'Library',
+      'Containers',
+      'com.example.akorSetlist',
+      'Data',
+      'Documents',
+      'akor_setlist_$userKey.db',
+    );
+    final file = File(candidate);
+    if (await file.exists()) return candidate;
+    return null;
   }
 }

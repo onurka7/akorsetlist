@@ -427,13 +427,8 @@ class SetlistsScreenState extends State<SetlistsScreen> {
 
     if (ok != true) return;
 
-    final offlinePath = song.offlinePath;
-    if (offlinePath != null && offlinePath.isNotEmpty) {
-      final file = File(offlinePath);
-      if (await file.exists()) {
-        await file.delete();
-      }
-    }
+    final offlinePath = await UserStorageService.resolveStoredFile(song.offlinePath, UserStorageService.songsDirectory);
+    if (offlinePath != null) await File(offlinePath).delete();
     await repo.removeSongFromAllSetlists(songId);
     await songRepo.deleteSong(songId);
     await _load();
@@ -534,6 +529,8 @@ class SetlistsScreenState extends State<SetlistsScreen> {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
   }
+
+  static const bool _showSongbook = false;
 
   Widget _buildQuickCards(bool isDark) {
     final hasPremiumTools =
@@ -637,6 +634,17 @@ class SetlistsScreenState extends State<SetlistsScreen> {
           onTap: () => setState(() => _topTab = 2),
         ),
         const SizedBox(height: 10),
+        // "Hazır Şarkılar" is hidden for now; flip to true to show it again.
+        if (_showSongbook) ...[
+          card(
+            icon: Icons.menu_book_rounded,
+            title: 'Hazır Şarkılar',
+            imageUrl:
+                'https://images.unsplash.com/photo-1507838153414-b4b713384a76?auto=format&fit=crop&w=900&q=80',
+            onTap: () => widget.onQuickAction?.call('songbook'),
+          ),
+          const SizedBox(height: 10),
+        ],
         if (hasPremiumTools) ...[
           card(
             icon: Icons.music_note_rounded,
@@ -957,13 +965,18 @@ class _SetlistCoverImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (coverPath != null && coverPath!.isNotEmpty) {
-      final f = File(coverPath!);
-      if (f.existsSync()) {
-        return Image.file(f, fit: BoxFit.cover);
-      }
-    }
+    if (coverPath == null || coverPath!.isEmpty) return _fallback();
+    return FutureBuilder<String?>(
+      future: UserStorageService.resolveStoredFile(coverPath, UserStorageService.coversDirectory),
+      builder: (context, snap) {
+        final path = snap.data;
+        if (path != null) return Image.file(File(path), fit: BoxFit.cover);
+        return snap.connectionState == ConnectionState.done ? _fallback() : const SizedBox.expand();
+      },
+    );
+  }
 
+  Widget _fallback() {
     return Image.network(
       defaultGuitarImageUrl,
       fit: BoxFit.cover,

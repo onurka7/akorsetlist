@@ -4,6 +4,7 @@ import 'chord_detection_screen.dart';
 import 'chords_screen.dart';
 import 'settings_screen.dart';
 import 'setlists_screen.dart';
+import 'songbook_screen.dart';
 import 'tuner_screen.dart';
 import 'web_search_screen.dart';
 
@@ -214,6 +215,12 @@ class HomeScreenState extends State<HomeScreen> {
               }
               if (action == 'chord_detection') {
                 _openChordDetection(backIndex: 0);
+                return;
+              }
+              if (action == 'songbook') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SongbookScreen()),
+                );
                 return;
               }
             },
